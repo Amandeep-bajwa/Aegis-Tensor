@@ -1,0 +1,305 @@
+[
+ {
+  "task": "ViT-base \u00b7 ImageNet-1k val subset",
+  "model": "google/vit-base-patch16-224",
+  "revision": "3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3",
+  "data": "hunarbatra/imagenet1k_val_3k",
+  "data_revision": "9e28fc94ccc843b988aab2ac108305c5d646e127",
+  "n": 1000,
+  "dtype": "float32",
+  "metric": "top-1 accuracy (%)",
+  "rows": [
+   {
+    "low_bits": 0,
+    "safe": true,
+    "bound": 0.0,
+    "top1": 81.2,
+    "agreement": 100.0,
+    "seconds": 36.9
+   },
+   {
+    "low_bits": 4,
+    "safe": true,
+    "bound": 9.5367431640625e-07,
+    "top1": 81.2,
+    "agreement": 100.0,
+    "seconds": 36.5
+   },
+   {
+    "low_bits": 8,
+    "safe": true,
+    "bound": 1.52587890625e-05,
+    "top1": 81.2,
+    "agreement": 100.0,
+    "seconds": 38.0
+   },
+   {
+    "low_bits": 12,
+    "safe": true,
+    "bound": 0.000244140625,
+    "top1": 81.2,
+    "agreement": 100.0,
+    "seconds": 38.1
+   },
+   {
+    "low_bits": 16,
+    "safe": true,
+    "bound": 0.00390625,
+    "top1": 81.2,
+    "agreement": 99.9,
+    "seconds": 40.0
+   },
+   {
+    "low_bits": 18,
+    "safe": false,
+    "bound": 0.015625,
+    "top1": 80.8,
+    "agreement": 99.3,
+    "seconds": 40.0
+   },
+   {
+    "low_bits": 20,
+    "safe": false,
+    "bound": 0.0625,
+    "top1": 81.0,
+    "agreement": 97.8,
+    "seconds": 41.3
+   }
+  ],
+  "fingerprint": "6a90760a7bf772bd"
+ },
+ {
+  "task": "BERT-base \u00b7 SST-2 validation",
+  "model": "yoshitomo-matsubara/bert-base-uncased-sst2",
+  "revision": "ce4cfd087e0c988beae0699f77a610bf7916742c",
+  "data": "stanfordnlp/sst2",
+  "data_revision": "8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb",
+  "n": 872,
+  "dtype": "float32",
+  "metric": "accuracy (%)",
+  "rows": [
+   {
+    "low_bits": 0,
+    "safe": true,
+    "bound": 0.0,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.9
+   },
+   {
+    "low_bits": 4,
+    "safe": true,
+    "bound": 9.5367431640625e-07,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.9
+   },
+   {
+    "low_bits": 8,
+    "safe": true,
+    "bound": 1.52587890625e-05,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.7
+   },
+   {
+    "low_bits": 12,
+    "safe": true,
+    "bound": 0.000244140625,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.7
+   },
+   {
+    "low_bits": 16,
+    "safe": true,
+    "bound": 0.00390625,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.6
+   },
+   {
+    "low_bits": 18,
+    "safe": false,
+    "bound": 0.015625,
+    "accuracy": 92.55,
+    "agreement": 100.0,
+    "seconds": 7.6
+   },
+   {
+    "low_bits": 20,
+    "safe": false,
+    "bound": 0.0625,
+    "accuracy": 92.89,
+    "agreement": 99.66,
+    "seconds": 7.5
+   }
+  ],
+  "fingerprint": "6a90760a7bf772bd"
+ },
+ {
+  "task": "GPT-2 \u00b7 WikiText-2 perplexity",
+  "model": "openai-community/gpt2",
+  "revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+  "data": "Salesforce/wikitext (wikitext-2-raw-v1 test)",
+  "data_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+  "n": 8192,
+  "dtype": "float32",
+  "metric": "perplexity (lower is better)",
+  "rows": [
+   {
+    "low_bits": 0,
+    "safe": true,
+    "bound": 0.0,
+    "perplexity": 41.97,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 4,
+    "safe": true,
+    "bound": 9.5367431640625e-07,
+    "perplexity": 41.97,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 8,
+    "safe": true,
+    "bound": 1.52587890625e-05,
+    "perplexity": 41.97,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 12,
+    "safe": true,
+    "bound": 0.000244140625,
+    "perplexity": 41.969,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 16,
+    "safe": true,
+    "bound": 0.00390625,
+    "perplexity": 41.84,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 18,
+    "safe": false,
+    "bound": 0.015625,
+    "perplexity": 44.236,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 20,
+    "safe": false,
+    "bound": 0.0625,
+    "perplexity": 43.173,
+    "seconds": 2.7
+   }
+  ],
+  "fingerprint": "6a90760a7bf772bd"
+ },
+ {
+  "task": "GPT-2 (cast to float16) \u00b7 WikiText-2 perplexity",
+  "model": "openai-community/gpt2",
+  "revision": "607a30d783dfa663caf39e06633721c8d4cfcd7e",
+  "data": "Salesforce/wikitext (wikitext-2-raw-v1 test)",
+  "data_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+  "n": 8192,
+  "dtype": "float16",
+  "metric": "perplexity (lower is better)",
+  "rows": [
+   {
+    "low_bits": 0,
+    "safe": true,
+    "bound": 0.0,
+    "perplexity": 41.968,
+    "seconds": 3.3
+   },
+   {
+    "low_bits": 2,
+    "safe": true,
+    "bound": 0.001953125,
+    "perplexity": 42.026,
+    "seconds": 2.8
+   },
+   {
+    "low_bits": 4,
+    "safe": true,
+    "bound": 0.0078125,
+    "perplexity": 42.066,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 6,
+    "safe": false,
+    "bound": 0.03125,
+    "perplexity": 42.238,
+    "seconds": 2.7
+   },
+   {
+    "low_bits": 8,
+    "safe": false,
+    "bound": 0.125,
+    "perplexity": 42.978,
+    "seconds": 2.8
+   }
+  ],
+  "fingerprint": "6a90760a7bf772bd"
+ },
+ {
+  "task": "Qwen2.5-0.5B \u00b7 WikiText-2 perplexity",
+  "model": "Qwen/Qwen2.5-0.5B",
+  "revision": "060db6499f32faf8b98477b0a26969ef7d8b9987",
+  "data": "Salesforce/wikitext (wikitext-2-raw-v1 test)",
+  "data_revision": "b08601e04326c79dfdd32d625aee71d232d685c3",
+  "n": 8192,
+  "dtype": "bfloat16",
+  "metric": "perplexity (lower is better)",
+  "rows": [
+   {
+    "low_bits": 0,
+    "safe": true,
+    "bound": 0.0,
+    "perplexity": 20.287,
+    "seconds": 8.3
+   },
+   {
+    "low_bits": 1,
+    "safe": true,
+    "bound": 0.0078125,
+    "perplexity": 20.279,
+    "seconds": 8.1
+   },
+   {
+    "low_bits": 2,
+    "safe": true,
+    "bound": 0.015625,
+    "perplexity": 20.406,
+    "seconds": 8.8
+   },
+   {
+    "low_bits": 3,
+    "safe": false,
+    "bound": 0.03125,
+    "perplexity": 20.521,
+    "seconds": 8.2
+   },
+   {
+    "low_bits": 4,
+    "safe": false,
+    "bound": 0.0625,
+    "perplexity": 21.392,
+    "seconds": 8.0
+   },
+   {
+    "low_bits": 5,
+    "safe": false,
+    "bound": 0.125,
+    "perplexity": 23.323,
+    "seconds": 7.9
+   }
+  ],
+  "fingerprint": "6a90760a7bf772bd"
+ }
+]

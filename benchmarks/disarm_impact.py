@@ -29,6 +29,7 @@ import torch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from aegis.disarm import MANTISSA_BITS, SAFE_MAX_LOW_BITS, disarm_state, max_relative_change  # noqa: E402
+from benchmarks.fingerprint import disarm_fingerprint  # noqa: E402
 
 CACHE = ROOT / "benchmarks" / ".hf-cache"
 RESULTS_PATH = ROOT / "benchmarks" / "results" / "disarm_impact.json"
@@ -245,7 +246,7 @@ def main() -> int:
         if args.only and name not in args.only:
             continue
         print(f"== {name}", flush=True)
-        results.append(task())
+        results.append({**task(), "fingerprint": disarm_fingerprint()})
         if not args.quick:
             # Keep tasks from earlier runs (for example a run restricted with --only), in task order.
             done = {r["task"] for r in results}

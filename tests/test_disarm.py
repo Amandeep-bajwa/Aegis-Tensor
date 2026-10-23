@@ -46,6 +46,7 @@ def test_half_precision_dtypes(dtype, bits):
     assert out.shape == values.shape
 
 
+@pytest.mark.claim("C09")
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_rounding_every_mantissa_bit_is_refused(dtype):
     values = torch.linspace(-2, 2, 33).to(dtype)
@@ -110,6 +111,7 @@ def test_rejects_invalid_low_bits():
         disarm_tensor(torch.zeros(4, dtype=torch.int64), low_bits=2)
 
 
+@pytest.mark.claim("C09")
 def test_disarm_file_destroys_lsb_payload_and_keeps_metadata(tmp_path):
     rng = np.random.default_rng(1)
     clean = torch.from_numpy(rng.normal(0, 0.02, 65_536).astype(np.float32))
@@ -146,3 +148,74 @@ def test_disarm_file_skips_integer_tensors(tmp_path):
     out = load_file(str(dst))
     assert report.tensors_skipped == 1
     assert torch.equal(out["idx"], torch.arange(8, dtype=torch.int64))
+
+
+# --- Format coverage and edge cases (numpy core, no torch needed) -------------------
+
+def test_largest_finite_values_do_not_round_up_to_infinity():
+    from aegis.disarm import round_bits
+
+    largest = np.array([np.finfo(np.float32).max, -np.finfo(np.float32).max], dtype=np.float32)
+    out = round_bits(largest.view(np.uint32), "float32", 16).view(np.float32)
+    assert np.all(np.isfinite(out))
+    assert np.all((out.view(np.uint32) & 0xFFFF) == 0)
+
+
+def test_disarm_rewrites_a_whitespace_padded_header_compactly(tmp_path):
+    import json
+    import struct
+
+    src, dst = tmp_path / "padded.safetensors", tmp_path / "out.safetensors"
+    save_file({"w": torch.randn(256)}, str(src))
+    raw = src.read_bytes()
+    (n,) = struct.unpack("<Q", raw[:8])
+    padded = raw[8:8 + n].rstrip() + b" " * 4096  # a 4 KiB whitespace channel
+    src.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    disarm_file(src, dst)
+    (m,) = struct.unpack("<Q", dst.read_bytes()[:8])
+    assert m < 200 and json.loads(dst.read_bytes()[8:8 + m])["w"]["dtype"] == "F32"
+
+
+@pytest.mark.claim("C09")
+def test_gguf_float_tensors_are_disarmed_and_everything_else_is_kept(tmp_path):
+    from aegis.modelformats import parse_gguf_header
+    from tests.test_model_formats import CLEAN_TEMPLATE, gguf_bytes
+
+    rng = np.random.default_rng(3)
+    f32 = rng.normal(0, 0.02, 4096).astype(np.float32)
+    f32 = ((f32.view(np.uint32) & ~np.uint32(0xFF)) | rng.integers(0, 256, 4096, dtype=np.uint32)).view(np.float32)
+    f16 = rng.normal(0, 0.02, 4096).astype(np.float16)
+    q4 = rng.integers(0, 256, 2304, dtype=np.uint8).tobytes()  # Q4_0 blocks
+    src, dst = tmp_path / "m.gguf", tmp_path / "m.disarmed.gguf"
+    src.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
+                               [("norm", [4096], 0, f32.tobytes()), ("emb", [4096], 1, f16.tobytes()),
+                                ("blk.0.ffn", [4096], 2, q4)]))
+    report = disarm_file(src, dst)
+    assert report.format == "gguf" and report.tensors_disarmed == 2
+    assert report.effective_low_bits == {"float32": 8, "float16": 4}
+    assert report.untreated == {"ggml type 2": 1} and "quantized" in report.warnings[-1]
+
+    out = dst.read_bytes()
+    metadata, infos, end = parse_gguf_header(out)
+    assert metadata["tokenizer.chat_template"] == CLEAN_TEMPLATE
+    start = -(-end // 32) * 32
+    norm = np.frombuffer(out, np.uint32, 4096, start + infos[0][3])
+    emb = np.frombuffer(out, np.uint16, 4096, start + infos[1][3])
+    assert np.all(norm & 0xFF == 0) and np.all(emb & 0xF == 0)
+    assert out[start + infos[2][3]:start + infos[2][3] + len(q4)] == q4
+
+
+def test_disarm_runs_without_torch(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = tmp_path / "m.safetensors"
+    save_file({"w": torch.randn(256)}, str(src))
+    code = ("import sys; sys.modules['torch'] = None\n"
+            "from aegis.disarm import disarm_file\n"
+            f"r = disarm_file({str(src)!r}, {str(tmp_path / 'o.safetensors')!r})\n"
+            "assert r.tensors_disarmed == 1\n")
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
+    assert result.returncode == 0, result.stderr
