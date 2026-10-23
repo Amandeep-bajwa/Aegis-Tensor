@@ -66,7 +66,7 @@
     "seconds": 41.3
    }
   ],
-  "fingerprint": "6a90760a7bf772bd"
+  "fingerprint": "e496b186932dda7a"
  },
  {
   "task": "BERT-base \u00b7 SST-2 validation",
@@ -135,7 +135,7 @@
     "seconds": 7.5
    }
   ],
-  "fingerprint": "6a90760a7bf772bd"
+  "fingerprint": "e496b186932dda7a"
  },
  {
   "task": "GPT-2 \u00b7 WikiText-2 perplexity",
@@ -197,7 +197,7 @@
     "seconds": 2.7
    }
   ],
-  "fingerprint": "6a90760a7bf772bd"
+  "fingerprint": "e496b186932dda7a"
  },
  {
   "task": "GPT-2 (cast to float16) \u00b7 WikiText-2 perplexity",
@@ -245,7 +245,7 @@
     "seconds": 2.8
    }
   ],
-  "fingerprint": "6a90760a7bf772bd"
+  "fingerprint": "e496b186932dda7a"
  },
  {
   "task": "Qwen2.5-0.5B \u00b7 WikiText-2 perplexity",
@@ -300,6 +300,6 @@
     "seconds": 7.9
    }
   ],
-  "fingerprint": "6a90760a7bf772bd"
+  "fingerprint": "e496b186932dda7a"
  }
 ]

@@ -7,10 +7,11 @@ change, until the benchmark is re-run. Comments, docstrings and formatting are i
 
 from __future__ import annotations
 
-import ast
 import hashlib
+import io
 import json
 import re
+import tokenize
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,13 +24,35 @@ DISARM_SOURCES = ["aegis/disarm.py"]
 
 
 def _normalise_python(text: str) -> str:
-    tree = ast.parse(text)
-    for node in ast.walk(tree):
-        body = getattr(node, "body", None)
-        if isinstance(body, list) and body and isinstance(body[0], ast.Expr) \
-                and isinstance(getattr(body[0], "value", None), ast.Constant) and isinstance(body[0].value.value, str):
-            node.body = body[1:] or [ast.Pass()]
-    return ast.dump(tree, annotate_fields=False)
+    """Source without comments, docstrings or whitespace.
+
+    Comment and docstring spans come from tokenize and are cut out of the text, which is
+    the same on every Python version. (ast.dump and the token stream are not: f-strings
+    tokenize differently from 3.12 on, and the fingerprint must match between CI and a
+    developer's machine.)
+    """
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    position = lambda row_col: offsets[row_col[0] - 1] + row_col[1]
+    cuts, previous = [], tokenize.NEWLINE
+    tokens = [t for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.type != tokenize.NL]
+    for index, token in enumerate(tokens):
+        following = tokens[index + 1].type if index + 1 < len(tokens) else tokenize.ENDMARKER
+        if token.type == tokenize.COMMENT:
+            cuts.append((position(token.start), position(token.end)))
+            continue
+        if (token.type == tokenize.STRING and previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+                and following in (tokenize.NEWLINE, tokenize.COMMENT, tokenize.ENDMARKER)):
+            cuts.append((position(token.start), position(token.end)))
+        previous = token.type
+    kept, cursor = [], 0
+    for start, end in cuts:
+        kept.append(text[cursor:start])
+        cursor = end
+    kept.append(text[cursor:])
+    return re.sub(r"\s+", "", "".join(kept))
 
 
 def _normalise_rust(text: str) -> str:

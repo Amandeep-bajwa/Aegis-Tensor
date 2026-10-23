@@ -44,3 +44,15 @@ def test_disarm_claim_matches_current_results_and_code():
     assert not stale, "\n".join(stale)
     stated = next(c for c in claims.load_register() if c["id"] == "C11")["values"]
     assert stated == values, "run `python scripts/claims.py --write`"
+
+
+def test_rules_fingerprint_ignores_comments_and_layout_but_not_code():
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    from benchmarks.fingerprint import _normalise_python
+
+    base = 'def f(x):\n    """Doc."""\n    return x + 1  # add one\n'
+    assert _normalise_python(base) == _normalise_python('def f(x):\n\n    return x+1\n')
+    assert _normalise_python(base) == _normalise_python(base.replace("# add one", "# increment"))
+    assert _normalise_python(base) != _normalise_python(base.replace("x + 1", "x + 2"))
