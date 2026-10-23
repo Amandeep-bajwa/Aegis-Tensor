@@ -87,14 +87,26 @@ def test_cli_fuzz_missing_model(tmp_path):
 
 
 def test_cli_fuzz_safetensors_guidance(tmp_path):
-    """Verify that providing .safetensors to `aegis fuzz` yields helpful guidance."""
+    """A .safetensors file without an architecture gets guidance, not a load attempt."""
+    torch = pytest.importorskip("torch")
+    from safetensors.torch import save_file
+
     st_file = tmp_path / "model.safetensors"
-    st_file.touch()
+    save_file(torch.nn.Linear(10, 2).state_dict(), str(st_file))
 
     result = run_cli("fuzz", str(st_file))
     assert result.returncode == 1
-    assert "Safetensors weight container detected" in result.stdout
+    assert "Architecture Required" in result.stdout
+    assert "--hf-config" in result.stdout
     assert "aegis scan" in result.stdout
+
+
+def test_cli_fuzz_unknown_format_is_refused(tmp_path):
+    empty = tmp_path / "model.safetensors"
+    empty.touch()
+    result = run_cli("fuzz", str(empty))
+    assert result.returncode == 1
+    assert "Unsupported File" in result.stdout
 
 
 def test_risk_badge_formatting():
@@ -117,9 +129,15 @@ def test_cli_scan_missing_model(tmp_path):
 
 
 def test_cli_fuzz_mocked_execution(tmp_path):
-    """Verify full end-to-end execution of `aegis fuzz` with rich reporting and JSON export."""
-    dummy_model_file = tmp_path / "model.pt"
-    dummy_model_file.touch()
+    """Rich reporting and JSON export of `aegis fuzz`, with only the fuzz loop mocked.
+
+    The model is loaded for real: safetensors weights into a trusted --arch.
+    """
+    torch = pytest.importorskip("torch")
+    from safetensors.torch import save_file
+
+    model_file = tmp_path / "model.safetensors"
+    save_file(torch.nn.Linear(10, 2).state_dict(), str(model_file))
     json_out = tmp_path / "fuzz_results.json"
 
     fake_report = TrojanScanReport(
@@ -144,28 +162,18 @@ def test_cli_fuzz_mocked_execution(tmp_path):
         ],
     )
 
-    mock_torch = MagicMock()
-    mock_torch.zeros.return_value = MagicMock()
-    mock_torch.randn.return_value = MagicMock()
-    # The CLI checks isinstance(model, torch.jit.ScriptModule), which needs a real class.
-    mock_torch.jit.ScriptModule = type("ScriptModule", (), {})
-    mock_torch.load.return_value = MagicMock()
-
-    with patch("aegis.cli.TORCH_AVAILABLE", True), \
-         patch.dict("sys.modules", {"torch": mock_torch}), \
-         patch("aegis.cli.DynamicTrojanFuzzer") as mock_fuzzer_cls:
-        
-        mock_fuzzer = MagicMock()
-        mock_fuzzer.run_fuzzing.return_value = fake_report
-        mock_fuzzer_cls.return_value = mock_fuzzer
-
+    with patch("aegis.modelload.fuzz_model", return_value=fake_report) as mock_fuzz:
         res = runner.invoke(app, [
             "fuzz",
-            str(dummy_model_file),
+            str(model_file),
+            "--arch", "torch.nn:Linear",
+            "--arch-kwargs", '{"in_features": 10, "out_features": 2}',
+            "--input-shape", "1,10",
             "--iterations", "5",
             "--spike-threshold", "4.0",
             "--output-json", str(json_out),
         ])
+        assert mock_fuzz.call_args.kwargs["input_shape"] == (1, 10)
 
         assert res.exit_code == 0
         assert "Dynamic Introspection Report" in res.stdout

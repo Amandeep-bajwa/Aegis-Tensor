@@ -1,0 +1,72 @@
+# Example workflow: scan model files changed in a pull request with Aegis-Tensor and
+# publish the findings to GitHub code scanning. Copy to .github/workflows/ in your repo.
+#
+# Results appear in the PR's "Files changed" view and in Security > Code scanning.
+# The job fails when a finding is at or above --fail-on (default: medium).
+name: Model security scan
+
+on:
+  pull_request:
+    paths:
+      - "**/*.safetensors"
+      - "**/*.pt"
+      - "**/*.pth"
+      - "**/*.bin"
+      - "**/*.pkl"
+      - "**/*.ckpt"
+      - "**/*.npy"
+      - "**/*.npz"
+
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF
+
+jobs:
+  aegis-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true          # model files are usually stored with Git LFS
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable   # builds the native scanner core
+
+      - name: Install Aegis-Tensor
+        # Pin to a release tag or commit you have reviewed.
+        run: pip install "aegis-tensor @ git+https://github.com/KrishG7/Aegis-Tensor@main"
+
+      - name: Find changed model files
+        id: changed
+        run: |
+          git diff --name-only --diff-filter=AMR "origin/${{ github.base_ref }}...HEAD" \
+            | grep -E '\.(safetensors|pt|pth|bin|pkl|ckpt|npy|npz)$' > changed-models.txt || true
+          echo "count=$(wc -l < changed-models.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          cat changed-models.txt
+
+      - name: Scan
+        id: scan
+        if: steps.changed.outputs.count != '0'
+        # Exit 0 = clean, 1 = findings at or above --fail-on, 2 = a file could not be scanned.
+        # The exit code is kept so the SARIF is uploaded before the job fails.
+        run: |
+          set +e
+          xargs -d '\n' aegis scan --format sarif --fail-on medium < changed-models.txt > aegis.sarif
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to code scanning
+        if: steps.changed.outputs.count != '0'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: aegis.sarif
+          category: aegis-tensor
+
+      - name: Fail on findings
+        if: steps.changed.outputs.count != '0' && steps.scan.outputs.exit_code != '0'
+        run: |
+          echo "aegis scan exited ${{ steps.scan.outputs.exit_code }} (1 = findings, 2 = scan error)"
+          exit 1

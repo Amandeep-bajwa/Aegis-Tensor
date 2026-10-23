@@ -148,11 +148,14 @@ def test_corrupt_safetensors_exits_2(tmp_path):
     assert _scan(path).exit_code == EXIT_ERROR
 
 
-@needs_core
-def test_non_safetensors_bytes_exit_2(tmp_path):
+def test_unknown_format_is_a_finding_not_an_error(tmp_path):
+    # Routing is by magic bytes: a non-safetensors file named .safetensors goes to the
+    # container scanner, where an unknown format is a medium finding (exit 1).
     path = tmp_path / "garbage.safetensors"
-    path.write_bytes(b"this is not a model file at all")
-    assert _scan(path).exit_code == EXIT_ERROR
+    path.write_bytes(b"\x00this is not a model file at all")
+    result = _scan(path)
+    assert result.exit_code == EXIT_FINDINGS, result.output
+    assert "unrecognised file format" in result.output
 
 
 def test_invalid_fail_on_value_exits_2(tmp_path):
@@ -169,8 +172,11 @@ def test_json_report_includes_max_severity_and_rules(overwritten_model, tmp_path
     result = _scan(overwritten_model, "-o", out)
     assert result.exit_code == EXIT_FINDINGS
     report = json.loads(out.read_text())
+    assert report["schema_version"] == "1.0.0"
     assert report["max_severity"] == "high"
     assert report["fail_on"] == "medium"
-    blob = next(t for t in report["tensors"] if t["name"] == "b.weight")
+    file_entry = report["files"][0]
+    blob = next(t for t in file_entry["tensors"] if t["name"] == "b.weight")
     assert "exponent_lane" in blob["rules"]
     assert blob["severity"] == "high"
+    assert any(f["rule"] == "AEGIS-T002" and f["location"]["tensor"] == "b.weight" for f in file_entry["findings"])

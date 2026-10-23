@@ -40,6 +40,18 @@ fuzzer = [
 dev = [
     "pytest>=7.0.0",
     "maturin>=1.5.0",
+    "py7zr>=1.0",  # lets tests (and users) inspect 7z-wrapped checkpoints
+    "jsonschema[format]>=4.18",  # validates JSON and SARIF output in tests
+    "onnx>=1.16",                # ONNX scanner tests (optional at runtime)
+    "h5py>=3.10",                # legacy Keras HDF5 scanner tests (optional at runtime)
+]
+# Benchmarks in benchmarks/. backdoor_eval.py also needs tensorflow (Python 3.12 or older).
+bench = [
+    "huggingface_hub>=0.25",
+    "transformers>=4.40",
+    "pyarrow",
+    "pillow",
+    "adversarial-robustness-toolbox>=1.20",
 ]
 
 [project.scripts]
