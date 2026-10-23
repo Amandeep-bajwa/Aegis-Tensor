@@ -57,7 +57,7 @@ graph TD
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+ (safetensors 0.8 requires it)
 - [Rust & Cargo](https://rustup.rs/)
 - [Maturin](https://github.com/PyO3/maturin)
 
@@ -93,13 +93,41 @@ Scan any `.safetensors` weights file for embedded malware payloads and statistic
 aegis scan /path/to/model.safetensors
 ```
 
+Each tensor is checked against three structural rules:
+- **Overwritten floats:** the sign/exponent byte lane is near-uniform (clean weights measure about 2.7 bits), or too many values are non-finite or implausibly large. Use `--exponent-threshold` to tune the lane rule.
+- **Structured low-order bits:** the two least significant mantissa bit planes have low entropy, which indicates a readable payload. Use `--plane-floor` to tune it.
+- **Whole-tensor entropy:** the pooled entropy exceeds `--entropy-threshold`.
+
+Benford's Law is reported per tensor but is off by default. It is noisy on small tensors. Enable it with `--benford-threshold`.
+
 Customize sensitivity thresholds:
 ```bash
 aegis scan /path/to/model.safetensors \
   --entropy-threshold 7.90 \
-  --benford-threshold 0.035 \
+  --exponent-threshold 6.5 \
+  --plane-floor 7.5 \
   --output-json report.json
 ```
+
+**Known limit:** random bits hidden in the least significant mantissa look like trained weights, so no static statistic can separate them. Remove them with `aegis disarm` (below).
+
+### Pickle Checkpoints (`.pt`, `.pth`, `.bin`, `.pkl`)
+`aegis scan` routes these files to an opcode scanner. It reads the pickle without executing it and flags any global outside the tensor-checkpoint allowlist, such as `os.system` or `builtins.eval`. Malformed pickles are reported, not skipped.
+```bash
+aegis scan /path/to/checkpoint.pt
+```
+
+### Disarming Low-Order Bits
+Rounds away the lowest mantissa bits of every float tensor. This destroys hidden payloads without detecting them, and each weight changes by at most a few units in its last kept place. It does not remove overwritten tensors, which a scan will still flag.
+```bash
+aegis disarm /path/to/model.safetensors /path/to/model.disarmed.safetensors --low-bits 8
+```
+
+### Dynamic Trojan Fuzzing (CLI)
+```bash
+aegis fuzz /path/to/eager_model.pt --input-shape 1,10 --iterations 50
+```
+Fuzzing needs an eager `nn.Module`. Pass `--trust-pickle` only for a file you trust, because loading a pickled module runs its code. TorchScript models cannot be fuzzed, since PyTorch disallows forward hooks on them. Runs are reproducible with `--seed`.
 
 ### Dynamic Trojan Fuzzing (Python API)
 ```python
