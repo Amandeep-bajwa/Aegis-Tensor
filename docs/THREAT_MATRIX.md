@@ -94,7 +94,9 @@ Tensor statistics for these formats come from the same Rust rules as safetensors
 
 | ID | Threat | Precedent | Detected by | Pinpoints | Treatment | Status |
 |---|---|---|---|---|---|---|
-| T26 | Jinja template injection in a GGUF chat template | CVE-2024-34359 (llama-cpp-python) | Dunder access, `attr` filter, module or eval calls in `tokenizer.chat_template*` | Metadata key | `refuse` | tested |
+| T26 | Jinja template injection in a GGUF chat template | CVE-2024-34359 (llama-cpp-python) | Template parsed with Jinja's parser; every attribute and item lookup must be a harmless literal or user data | Metadata key + line | `refuse` | tested |
+| T34 | Template injection written to evade the check: names built at render time, hidden in variables, namespaces or macro arguments, reached through `attr`/`map`/`str.format`, or taken from `eos_token` | Attacker who knows the rules | Lookup keys traced through assignments; names built from template literals or model-supplied variables are flagged | Metadata key + line | `refuse` | tested |
+| T35 | Template that loads other templates or does not parse | Analysis evasion | Reported as unverifiable | Metadata key | inspect | tested |
 | T27 | Overwritten float tensor in a GGUF file | Weight steganography | Tensor rules on F32/F16/BF16/F64 tensors | Tensor name | `quarantine` | tested |
 | T28 | Malformed or truncated GGUF | Parser confusion | Bounds-checked parse; reported as a finding | File | inspect | tested |
 | T29 | Keras `Lambda` layer carrying Python bytecode | Keras code execution on load without safe_mode | Config JSON walk | Layer name | `refuse` | tested |
@@ -106,7 +108,7 @@ Tensor statistics for these formats come from the same Rust rules as safetensors
 Limits:
 - Quantized GGUF tensors (Q4/Q5/Q8/K-quants) are packed blocks, so the float rules do not apply to them and they are skipped.
 - ONNX files are recognised by the `.onnx` extension plus their protobuf header, because ONNX has no magic number.
-- Template checks are pattern-based. A template that renders safely in a sandboxed environment can still be flagged when it uses dunder names.
+- Template checks parse the template and never render it. They are conservative: a lookup key built from template literals is flagged even when the result is harmless. Runtimes that render with their own engine (llama.cpp's C++ Jinja implementation, Ollama's Go templates) are not exposed to Python escapes, but a file is judged by the most permissive loader that might open it.
 
 ## F. Out of scope for a weights-and-container scanner
 

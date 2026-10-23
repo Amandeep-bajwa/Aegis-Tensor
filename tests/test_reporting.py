@@ -85,7 +85,7 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         "zip_tampered", "no_payload", "container_unreadable", "archive_7z", "malformed_npy", "npy_object",
         "unknown_format",
         # GGUF, Keras and ONNX scanners (aegis/modelformats.py)
-        "gguf_template", "gguf_malformed", "keras_lambda", "keras_custom_object",
+        "gguf_template", "gguf_template_unverifiable", "gguf_malformed", "keras_lambda", "keras_custom_object",
         "onnx_external_path", "onnx_external_data", "onnx_custom_op", "format_unavailable",
         # Fuzzer
         "activation_spike",

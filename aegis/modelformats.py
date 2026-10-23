@@ -15,7 +15,6 @@ Nothing is executed and no model is loaded through its framework:
 import io
 import json
 import os
-import re
 import struct
 import zipfile
 from dataclasses import dataclass, field
@@ -33,12 +32,6 @@ _GGUF_SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 
 _GGML_FLOAT_TYPES = {0: ("F32", 4), 1: ("F16", 2), 28: ("F64", 8), 30: ("BF16", 2)}
 # Jinja patterns that reach Python internals or the OS. Legitimate chat templates do not
 # need dunder attributes, the `attr` filter or process/eval calls.
-_TEMPLATE_INJECTION = [
-    (re.compile(r"__[A-Za-z]+__"), "dunder attribute access"),
-    (re.compile(r"\|\s*attr\s*\("), "`attr` filter (bypasses attribute restrictions)"),
-    (re.compile(r"\b(?:os|subprocess|sys|builtins|importlib|socket)\s*\.\s*\w+"), "module access"),
-    (re.compile(r"\b(?:popen|system|eval|exec|__import__|getattr|globals|locals|compile)\s*\("), "code-execution call"),
-]
 _ONNX_STANDARD_DOMAINS = {"", "ai.onnx", "ai.onnx.ml", "ai.onnx.preview.training", "ai.onnx.training"}
 
 
@@ -92,14 +85,14 @@ def _tensor_stats(result: ModelFormatResult, name: str, dtype: str, shape: List[
 
 
 def _check_template(text: str, result: ModelFormatResult, where: str) -> None:
-    hits = [label for pattern, label in _TEMPLATE_INJECTION if pattern.search(text)]
-    if hits:
-        result.add(
-            "CRITICAL",
-            "chat template uses " + ", ".join(sorted(set(hits)))
-            + " - Jinja template injection runs code when an unsandboxed loader renders it",
-            where, code="gguf_template",
-        )
+    from aegis.templatescan import check_template
+
+    for code, message in check_template(text):
+        if code == "injection":
+            result.add("CRITICAL", f"chat template: {message}. An unsandboxed Jinja loader would run code "
+                       "(CVE-2024-34359)", where, code="gguf_template")
+        else:
+            result.add("SUSPICIOUS", f"chat template: {message}", where, code="gguf_template_unverifiable")
 
 
 # --- GGUF -------------------------------------------------------------------------
