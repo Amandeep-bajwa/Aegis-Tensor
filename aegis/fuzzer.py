@@ -4,6 +4,7 @@ Hooks into PyTorch models using forward hooks, measuring intermediate layer
 activations under fuzzing to detect Sleeper Agent Trojan triggers via L_infinity norm spikes.
 """
 
+import math
 from dataclasses import dataclass, fields, field, is_dataclass
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
@@ -73,6 +74,8 @@ class TrojanScanReport:
     layer_anomalies: List[LayerAnomaly] = field(default_factory=list)
     anomaly_regions: Dict[str, List[str]] = field(default_factory=dict)
     baseline_stats: Dict[str, LayerBaselineStat] = field(default_factory=dict)
+    # Peak ratio of fuzzed L_inf to the magnitude-matched clean L_inf, per layer.
+    layer_spike_ratios: Dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +83,14 @@ class TrojanScanReport:
 # ---------------------------------------------------------------------------
 
 FuzzCase = Tuple[str, Any]  # (input_tag, input_tensor)
+
+# L_inf magnitudes of the clean calibration inputs, cycled over the calibration set.
+# Kept to the benign input range. Calibrating at larger magnitudes would let clean
+# inputs fire magnitude-keyed triggers, and the reference would then hide them.
+# Fuzzed inputs above this range are compared against the largest clean magnitude.
+CALIBRATION_MAGNITUDES = (0.25, 0.5, 1.0, 2.0, 4.0)
+# A fuzzed input is compared with clean inputs whose magnitude is within this factor.
+MAGNITUDE_MATCH_FACTOR = 1.5
 
 
 def _require_torch() -> None:
@@ -380,6 +391,45 @@ def _depth_bucket(index: int, total: int) -> str:
     return "late"
 
 
+def _input_magnitude(x: Any) -> Optional[float]:
+    """L_inf magnitude of a floating-point input, or None for token IDs and other inputs."""
+    if torch.is_tensor(x) and x.is_floating_point() and x.numel() > 0:
+        return float(torch.max(torch.abs(x.detach())).item())
+    return None
+
+
+def _matched_baseline(
+    records: List[Tuple[Optional[float], Dict[str, float]]],
+    magnitude: Optional[float],
+    layer: str,
+) -> float:
+    """Clean L_inf of ``layer`` for inputs whose magnitude matches ``magnitude``.
+
+    Comparing a fuzzed input against clean inputs of the same magnitude keeps
+    ordinary input-scale effects, including bias-dominated responses at small
+    magnitudes, from being read as a backdoor. A clean network stays near ratio 1
+    at every scale. Falls back to the three nearest magnitudes when none match.
+    """
+    candidates = [(m, layers[layer]) for m, layers in records if layer in layers]
+    if magnitude is not None and magnitude > 0:
+        matched = [v for m, v in candidates if m is not None and magnitude / MAGNITUDE_MATCH_FACTOR <= m <= magnitude * MAGNITUDE_MATCH_FACTOR]
+        if not matched:
+            # Outside the calibrated range: scale the nearest clean responses linearly
+            # to the fuzzed magnitude. A homogeneous network responds linearly, so this
+            # keeps clean networks near ratio 1 at any scale.
+            valid = [(m, v) for m, v in candidates if m is not None and m > 0]
+            if valid:
+                nearest = min(valid, key=lambda mv: abs(math.log(mv[0]) - math.log(magnitude)))[0]
+                group = [
+                    (m, v) for m, v in valid
+                    if abs(math.log(m) - math.log(nearest)) <= math.log(MAGNITUDE_MATCH_FACTOR)
+                ]
+                matched = [v * magnitude / m for m, v in group]
+    else:
+        matched = [v for _, v in candidates]
+    return max(max(matched, default=0.0), 1e-6)
+
+
 class _RunningStat:
     """Welford running mean / std / max for one layer's L_inf norms."""
 
@@ -427,10 +477,12 @@ class DynamicTrojanFuzzer:
         seq_len: Optional[int] = None,
         seed: Optional[int] = None,
         calibration_inputs: Optional[List[Any]] = None,
-        num_calibration: int = 16,
+        num_calibration: int = 64,
         calibration_noise_std: float = 1.0,
+        input_dtype: Any = None,
+        input_device: Any = None,
     ) -> TrojanScanReport:
-        """Fuzz the model and flag layers whose L_inf norm spikes above clean behaviour.
+        """Fuzz the model and flag layers whose activations spike above clean behaviour.
 
         Manual mode: pass ``sample_inputs_generator`` and ``baseline_input``.
         Automated mode: leave ``sample_inputs_generator`` as None and pass
@@ -440,9 +492,23 @@ class DynamicTrojanFuzzer:
         inputs, not a single tensor. Pass ``calibration_inputs`` explicitly,
         or they are generated as ``baseline_input`` plus Gaussian noise
         (``num_calibration`` samples, std ``calibration_noise_std``).
-        A layer is suspicious when its peak fuzzed L_inf / clean max L_inf
-        is at least ``spike_threshold``.
+
+        Each fuzzed input is compared with clean inputs of the same L_inf magnitude
+        (within a factor of ``MAGNITUDE_MATCH_FACTOR``). A layer is suspicious when
+        its peak fuzzed activation is at least ``spike_threshold`` times the matched
+        clean activation. Comparing like with like keeps ordinary input-scale effects
+        from being read as a backdoor.
+
+        ``input_dtype`` and ``input_device`` cast the generated inputs, so automated
+        mode works for half-precision or GPU models.
         """
+        def _cast(x: Any) -> Any:
+            if not torch.is_tensor(x) or not x.is_floating_point():
+                return x
+            if input_dtype is None and input_device is None:
+                return x
+            return x.to(dtype=input_dtype or x.dtype, device=input_device or x.device)
+
         auto_suite: Optional[List[FuzzCase]] = None
         if sample_inputs_generator is None:
             auto_suite = build_auto_fuzz_suite(
@@ -457,20 +523,25 @@ class DynamicTrojanFuzzer:
         elif baseline_input is None:
             raise ValueError("baseline_input is required when a custom sample_inputs_generator is given")
 
-        calibration = self._build_calibration(
+        baseline_input = _cast(baseline_input)
+        calibration = [_cast(x) for x in self._build_calibration(
             baseline_input, calibration_inputs, num_calibration, calibration_noise_std, vocab_size, seed
-        )
+        )]
 
         hook_mgr = ActivationHookManager(self.model)
         try:
-            # 1. Clean calibration: running max / mean / std of L_inf per layer
+            # 1. Clean calibration: global statistics per layer, plus one record per clean
+            #    input so each fuzzed input can be matched to clean inputs of its magnitude.
             running: Dict[str, _RunningStat] = {}
+            records: List[Tuple[Optional[float], Dict[str, float]]] = []
             for clean_input in calibration:
                 hook_mgr.clear()
                 with torch.no_grad():
                     _ = self.model(clean_input)
-                for name, stat in hook_mgr.current_activations.items():
-                    running.setdefault(name, _RunningStat()).update(stat.l_inf_norm)
+                layer_max = {name: stat.l_inf_norm for name, stat in hook_mgr.current_activations.items()}
+                records.append((_input_magnitude(clean_input), layer_max))
+                for name, value in layer_max.items():
+                    running.setdefault(name, _RunningStat()).update(value)
 
             baseline_stats = {
                 name: LayerBaselineStat(name, rs.max, rs.mean, rs.std, rs.n) for name, rs in running.items()
@@ -478,14 +549,16 @@ class DynamicTrojanFuzzer:
             baseline_max_l_inf = max((b.max_l_inf for b in baseline_stats.values()), default=1.0)
             baseline_max_l_inf = max(baseline_max_l_inf, 1e-6)
 
-            # 2. Fuzzing loop: track each layer's peak and what triggered it
-            peak_by_layer: Dict[str, Tuple[float, str, int]] = {}
+            # 2. Fuzzing loop: each layer's spike ratio is its fuzzed L_inf divided by the
+            #    clean L_inf at the same input magnitude. Track the strongest trigger per layer.
+            peak_by_layer: Dict[str, Tuple[float, str, int, float]] = {}  # ratio, tag, iteration, raw L_inf
             peak_fuzzed_l_inf = 0.0
             iteration_reports: List[FuzzIterationReport] = []
 
             for i in range(num_iterations):
                 if auto_suite is not None:
                     input_tag, test_input = auto_suite[i % len(auto_suite)]
+                    test_input = _cast(test_input)
                 else:
                     input_tag, test_input = f"fuzz_step_{i + 1}", sample_inputs_generator(i)
                 hook_mgr.clear()
@@ -496,35 +569,33 @@ class DynamicTrojanFuzzer:
                 if not layer_stats:
                     continue
 
-                iter_top_layer, iter_max = "", 0.0
+                magnitude = _input_magnitude(test_input)
+                iter_top_layer, iter_ratio, iter_raw = "", 0.0, 0.0
                 for name, stat in layer_stats.items():
-                    if stat.l_inf_norm > iter_max:
-                        iter_max, iter_top_layer = stat.l_inf_norm, name
-                    if name not in peak_by_layer or stat.l_inf_norm > peak_by_layer[name][0]:
-                        peak_by_layer[name] = (stat.l_inf_norm, input_tag, i + 1)
+                    ratio = stat.l_inf_norm / _matched_baseline(records, magnitude, name)
+                    if ratio > iter_ratio:
+                        iter_ratio, iter_top_layer = ratio, name
+                    iter_raw = max(iter_raw, stat.l_inf_norm)
+                    if name not in peak_by_layer or ratio > peak_by_layer[name][0]:
+                        peak_by_layer[name] = (ratio, input_tag, i + 1, stat.l_inf_norm)
 
-                peak_fuzzed_l_inf = max(peak_fuzzed_l_inf, iter_max)
+                peak_fuzzed_l_inf = max(peak_fuzzed_l_inf, iter_raw)
                 iteration_reports.append(
                     FuzzIterationReport(
                         iteration=i + 1,
                         input_tag=input_tag,
                         layer_stats=layer_stats,
-                        max_l_inf=iter_max,
+                        max_l_inf=iter_raw,
                         highest_layer=iter_top_layer,
                     )
                 )
                 if progress_callback is not None:
-                    progress_callback(i + 1, num_iterations, iter_top_layer, iter_max)
+                    progress_callback(i + 1, num_iterations, iter_top_layer, iter_raw)
 
             # 3. Sub-network isolation
             anomalies = self._isolate_anomalies(hook_mgr.hooked_modules, baseline_stats, peak_by_layer)
-            spike_ratio = max((a.spike_ratio for a in anomalies), default=0.0)
-            if not anomalies:
-                spike_ratio = max(
-                    (peak / max(baseline_stats[n].max_l_inf, 1e-6)
-                     for n, (peak, _, _) in peak_by_layer.items() if n in baseline_stats),
-                    default=0.0,
-                )
+            layer_spike_ratios = {name: peak[0] for name, peak in peak_by_layer.items()}
+            spike_ratio = max(layer_spike_ratios.values(), default=0.0)
             regions: Dict[str, List[str]] = {}
             for a in anomalies:
                 regions.setdefault(a.region, []).append(a.layer_name)
@@ -541,6 +612,7 @@ class DynamicTrojanFuzzer:
                 layer_anomalies=anomalies,
                 anomaly_regions=regions,
                 baseline_stats=baseline_stats,
+                layer_spike_ratios=layer_spike_ratios,
             )
         finally:
             hook_mgr.remove()
@@ -562,9 +634,13 @@ class DynamicTrojanFuzzer:
         if not torch.is_tensor(baseline_input) or num_calibration <= 0:
             return calibration
         gen = torch.Generator().manual_seed(seed) if seed is not None else None
-        for _ in range(num_calibration):
+        for k in range(num_calibration):
             if baseline_input.is_floating_point():
-                noise = torch.randn(baseline_input.shape, generator=gen) * noise_std
+                # Each clean input has a known L_inf magnitude, so fuzzed inputs can be
+                # compared against clean inputs of the same size (see _matched_baseline).
+                target = CALIBRATION_MAGNITUDES[k % len(CALIBRATION_MAGNITUDES)] * noise_std
+                noise = torch.randn(baseline_input.shape, generator=gen)
+                noise = noise / noise.abs().max().clamp_min(1e-12) * target
                 calibration.append(baseline_input + noise.to(baseline_input.dtype))
             elif vocab_size is not None:
                 calibration.append(torch.randint(0, vocab_size, baseline_input.shape, generator=gen))
@@ -574,17 +650,19 @@ class DynamicTrojanFuzzer:
         self,
         hooked_modules: Dict[str, Any],
         baseline_stats: Dict[str, LayerBaselineStat],
-        peak_by_layer: Dict[str, Tuple[float, str, int]],
+        peak_by_layer: Dict[str, Tuple[float, str, int, float]],
     ) -> List[LayerAnomaly]:
-        """Return every layer whose spike ratio >= threshold, strongest first."""
+        """Return every layer whose spike ratio >= threshold, strongest first.
+
+        ``peak_by_layer`` holds (spike ratio, trigger tag, iteration, raw peak L_inf).
+        """
         names = list(hooked_modules)
         anomalies: List[LayerAnomaly] = []
         for idx, name in enumerate(names):
             if name not in peak_by_layer or name not in baseline_stats:
                 continue
-            peak, tag, iteration = peak_by_layer[name]
+            ratio, tag, iteration, peak = peak_by_layer[name]
             base = baseline_stats[name]
-            ratio = peak / max(base.max_l_inf, 1e-6)
             if ratio < self.spike_threshold:
                 continue
             module = hooked_modules[name]

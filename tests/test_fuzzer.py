@@ -190,7 +190,10 @@ def test_auto_mode_uncovers_trojan_without_custom_generator():
     report = fuzzer.run_fuzzing(input_shape=(2, 10), num_iterations=12, seed=0)
 
     assert report.suspected_trojan
-    assert "fc1" in report.suspicious_layers
+    # The gate sits between fc1 and fc2 and multiplies fc1's output, so the spike
+    # appears in fc2. fc1's own output is unchanged by the trigger.
+    assert "fc2" in report.suspicious_layers
+    assert "fc1" not in report.suspicious_layers
     tags = {r.input_tag for r in report.iteration_reports}
     assert any(t.startswith("gaussian_") for t in tags)
     assert any(t.startswith("boundary_") for t in tags)
@@ -260,8 +263,8 @@ def test_calibration_prevents_false_alarm_on_benign_noise():
     )
     assert not report.suspected_trojan
     assert report.layer_anomalies == []
-    # baseline_input + 16 noisy calibration samples
-    assert report.baseline_stats["layer1"].num_samples == 17
+    # baseline_input + 64 noisy calibration samples (the default num_calibration)
+    assert report.baseline_stats["layer1"].num_samples == 65
     assert report.baseline_stats["layer1"].std_l_inf > 0
 
 
