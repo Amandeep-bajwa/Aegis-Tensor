@@ -17,9 +17,11 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 import json
+import zipfile
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -41,6 +43,32 @@ from aegis import (
     scan_safetensors,
     DynamicTrojanFuzzer,
 )
+from aegis.severity import (
+    EXIT_ERROR,
+    HEADER_CHANNEL_SEVERITY,
+    PICKLE_SEVERITY,
+    exit_code_for,
+    tensor_severity,
+    worst,
+)
+
+
+class FailOn(str, Enum):
+    """Severity choices for `aegis scan --fail-on`."""
+
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
+STRUCTURAL_MARKERS = ("overwritten", "structured", "could not be read")
+
+
+def _is_structural(result) -> bool:
+    """True when a tensor shows structural evidence, not only a pooled-entropy hit."""
+    return any(marker in reason for reason in result.anomaly_reasons for marker in STRUCTURAL_MARKERS)
+
 
 def get_risk_badge(level: str) -> str:
     """Return styled security risk badge for terminal display."""
@@ -66,7 +94,7 @@ BANNER = r"""[bold cyan]
   / /_\ \ | |__  | |  \/ | || (___ ______| | | |__ |  \| \ `--.| | | | |_/ /
   |  _  | |  __| | | __  | | \___ \______| | |  __|| . ` |`--. \ | | |    / 
   | | | | | |____| |_\ \_| |_____) |     | | | |___| |\  /\__/ /\ \_/ / |\ \ 
-  \_| |_/ |______|\____/_____|_____/     \_/ \____/\_| \_/\____/  \___/\_| \_|
+  \_| |_/ |______|\____/_____|_____/     \_/ \____/\_| \_/\____/ \___/\_| \_|
 [/bold cyan]
 [dim]Adversarial Threat Scanner: Steganography & Sleeper Agent Trojan Detection[/dim]
 """
@@ -92,6 +120,101 @@ def main(
         console.print("[yellow]Use [bold]aegis --help[/bold] to see available commands.[/yellow]")
 
 
+PICKLE_SUFFIXES = {".pt", ".pth", ".bin", ".pkl", ".pickle"}
+
+
+def _treatment_lines(results, header_result, model_path: Path) -> List[str]:
+    """Map each kind of finding to the treatment that addresses it.
+
+    Only treatments that exist in this tool are recommended. Anything else is
+    reported as quarantine, meaning the tensor must come from another source.
+    """
+    lines: List[str] = []
+    structured = [r.name for r in results if any("structured" in x for x in r.anomaly_reasons)]
+    overwritten = [
+        r.name for r in results
+        if any(m in x for x in r.anomaly_reasons for m in ("overwritten", "encrypted", "could not be read"))
+    ]
+    header_sanitize = [f for f in header_result.findings if f.treatment == "sanitize"]
+    header_quarantine = [f for f in header_result.findings if f.treatment == "quarantine"]
+    disarm_cmd = f"aegis disarm {model_path} {model_path.with_suffix('.disarmed.safetensors')} --low-bits 8"
+
+    if structured or header_sanitize:
+        flags = " --strip-metadata" if header_sanitize else ""
+        lines.append(
+            f"• Structured low-order bits or header payload: run "
+            f"`{disarm_cmd}{flags}`, then re-scan the output."
+        )
+    if overwritten or header_quarantine:
+        names = ", ".join(overwritten + [f.where for f in header_quarantine])[:200]
+        lines.append(
+            f"• Overwritten or unreadable tensors ({names}): quarantine. Rounding cannot repair them. "
+            "Obtain these tensors from the original source."
+        )
+    if lines:
+        lines.append("Do not load this checkpoint until the treatment is applied and the re-scan is clean.")
+    return lines
+
+
+def _report_pickle_scan(model_path: Path, json_output: Optional[Path]) -> Optional[str]:
+    """Render the static pickle-opcode scan of a checkpoint and return its worst severity.
+
+    Nothing is loaded or executed. Exits with EXIT_ERROR when the file cannot be read.
+    """
+    from aegis.picklescan import scan_pickle_file
+
+    try:
+        result = scan_pickle_file(model_path)
+    except (OSError, zipfile.BadZipFile) as e:
+        console.print(f"[bold red]Scan failed:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR)
+    level = worst(PICKLE_SEVERITY[f.severity] for f in result.findings)
+
+    table = Table(
+        title=f"Aegis-Tensor Pickle Opcode Scan ({len(result.globals_seen)} globals referenced)",
+        box=box.ROUNDED,
+        header_style="bold magenta",
+    )
+    table.add_column("Severity", justify="center")
+    table.add_column("Finding")
+    for finding in result.findings:
+        color = "red" if finding.severity == "CRITICAL" else "yellow"
+        table.add_row(f"[bold {color}]{finding.severity}[/bold {color}]", finding.message)
+    if result.findings:
+        console.print(table)
+    else:
+        console.print(f"[green]No dangerous imports among {len(result.globals_seen)} referenced globals.[/green]")
+
+    if result.is_critical:
+        badge = get_risk_badge("CRITICAL")
+        title, border = "🚨 Code-Execution Payload Detected", "red"
+        summary = "This checkpoint imports code-execution primitives. Loading it would run them. Do not load it."
+    elif result.is_suspicious:
+        badge = get_risk_badge("SUSPICIOUS")
+        title, border = "⚠️ Unrecognised Pickle Content", "yellow"
+        summary = "The checkpoint imports unexpected globals or is malformed. Inspect it before loading."
+    else:
+        badge = get_risk_badge("CLEAN")
+        title, border = "✅ Pickle Clean", "green"
+        summary = "Every imported global is on the tensor-checkpoint allowlist."
+    console.print(Panel(f"{badge}\n\n{summary}", title=title, border_style=border))
+
+    if json_output:
+        with open(json_output, "w") as f:
+            json.dump({
+                "model_path": str(model_path.resolve()),
+                "format": "pickle",
+                "is_critical": result.is_critical,
+                "max_severity": level,
+                "findings": [
+                    {"severity": PICKLE_SEVERITY[x.severity], "message": x.message} for x in result.findings
+                ],
+                "globals_seen": result.globals_seen,
+            }, f, indent=2)
+        console.print(f"[dim]Report saved to: {json_output}[/dim]")
+    return level
+
+
 @app.command(name="scan")
 def scan_command(
     model_path: Path = typer.Argument(..., help="Path to the .safetensors model file to scan."),
@@ -101,11 +224,27 @@ def scan_command(
         "-e",
         help="Shannon entropy threshold for flagging encrypted/compressed payloads (max 8.0).",
     ),
-    benford_threshold: float = typer.Option(
-        0.035,
+    exponent_threshold: float = typer.Option(
+        6.5,
+        "--exponent-threshold",
+        help="Sign/exponent byte-lane entropy (bits) above which float values count as overwritten. Clean weights measure about 2.7.",
+    ),
+    plane_floor: float = typer.Option(
+        7.5,
+        "--plane-floor",
+        help="Low mantissa bit-plane entropy (bits) below which the least significant bits count as structured. Clean weights measure about 8.",
+    ),
+    benford_threshold: Optional[float] = typer.Option(
+        None,
         "--benford-threshold",
         "-b",
-        help="Benford's Law MAD threshold for flagging anomalous non-natural float distributions.",
+        help="Optional Benford's Law MAD threshold. Off by default: it is noisy on small tensors.",
+    ),
+    fail_on: FailOn = typer.Option(
+        FailOn.medium,
+        "--fail-on",
+        case_sensitive=False,
+        help="Lowest severity that makes the scan exit 1. Exit 0 = nothing at or above it, 2 = scan error.",
     ),
     json_output: Optional[Path] = typer.Option(
         None,
@@ -114,12 +253,23 @@ def scan_command(
         help="Save full scan report to a JSON file.",
     ),
 ):
-    """Run zero-copy static security scan on a .safetensors model using Rust core."""
+    """Static security scan of a model file.
+
+    .safetensors files get the tensor and header scan (Rust core); .pt/.pth/.bin/.pkl
+    files get the pickle opcode scan. Exit codes: 0 = no finding at or above --fail-on,
+    1 = at least one such finding, 2 = the scan could not run.
+    """
     print_banner()
 
     if not model_path.exists():
         console.print(f"[bold red]Error:[/bold red] Model file not found at: {model_path}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
+
+    # Pickle-based checkpoints run code when loaded, so they get the opcode scanner.
+    # That scanner does not need the Rust core.
+    if model_path.suffix.lower() in PICKLE_SUFFIXES:
+        level = _report_pickle_scan(model_path, json_output)
+        raise typer.Exit(code=exit_code_for(level, fail_on.value))
 
     if not CORE_AVAILABLE or scan_safetensors is None:
         console.print(
@@ -133,17 +283,23 @@ def scan_command(
                 border_style="red",
             )
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_ERROR)
 
     console.print(f"[bold]Scanning:[/bold] [cyan]{model_path.resolve()}[/cyan]")
-    console.print(f"[dim]Thresholds: Shannon Entropy > {entropy_threshold:.2f} | Benford MAD > {benford_threshold:.4f}[/dim]\n")
+    benford_note = f"Benford MAD > {benford_threshold:.4f}" if benford_threshold is not None else "Benford off"
+    console.print(
+        f"[dim]Thresholds: Entropy > {entropy_threshold:.2f} | Exponent lane > {exponent_threshold:.2f} | "
+        f"Low-bit plane < {plane_floor:.2f} | {benford_note}[/dim]\n"
+    )
 
     with console.status("[bold green]Memory-mapping and scanning tensors...[/bold green]"):
         try:
-            results = scan_safetensors(str(model_path), entropy_threshold, benford_threshold)
+            results = scan_safetensors(
+                str(model_path), entropy_threshold, benford_threshold, exponent_threshold, plane_floor
+            )
         except Exception as e:
             console.print(f"[bold red]Scan failed:[/bold red] {e}")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_ERROR)
 
     # Build results table
     table = Table(
@@ -155,10 +311,12 @@ def scan_command(
     table.add_column("Dtype", justify="center")
     table.add_column("Shape", justify="center")
     table.add_column("Entropy (Bits)", justify="right")
-    table.add_column("Benford MAD", justify="right")
+    table.add_column("Exponent Lane", justify="right")
+    table.add_column("Low-Bit Plane", justify="right")
     table.add_column("Status", justify="center")
 
     suspicious_count = 0
+    structural_count = 0
     report_data = []
 
     for res in results:
@@ -168,16 +326,26 @@ def scan_command(
             status_text = "[bold red]SUSPICIOUS[/bold red]"
         else:
             status_text = "[bold green]CLEAN[/bold green]"
+        if _is_structural(res):
+            structural_count += 1
 
         entropy_color = "red" if res.entropy > entropy_threshold else "white"
-        benford_color = "red" if res.benford_mad > benford_threshold else "white"
+        lane = res.exponent_lane_entropy
+        lane_text = "-" if lane is None else (
+            f"[red]{lane:.4f}[/red]" if lane > exponent_threshold else f"{lane:.4f}"
+        )
+        plane = res.low_plane_entropy
+        plane_text = "-" if plane is None else (
+            f"[red]{plane:.4f}[/red]" if plane < plane_floor else f"{plane:.4f}"
+        )
 
         table.add_row(
             res.name,
             res.dtype,
             str(res.shape),
             f"[{entropy_color}]{res.entropy:.4f}[/{entropy_color}]",
-            f"[{benford_color}]{res.benford_mad:.4f}[/{benford_color}]",
+            lane_text,
+            plane_text,
             status_text,
         )
 
@@ -187,25 +355,57 @@ def scan_command(
             "shape": res.shape,
             "num_elements": res.num_elements,
             "entropy": res.entropy,
+            "lane_entropies": res.lane_entropies,
+            "exponent_lane_entropy": res.exponent_lane_entropy,
+            "low_plane_entropy": res.low_plane_entropy,
+            "out_of_range_fraction": res.out_of_range_fraction,
             "benford_mad": res.benford_mad,
             "is_suspicious": res.is_suspicious,
             "anomaly_reasons": res.anomaly_reasons,
+            "rules": res.rules,
+            "severity": tensor_severity(res),
         })
 
     console.print(table)
 
-    if suspicious_count > 0:
-        is_critical = any(
-            res.entropy > entropy_threshold and res.benford_mad > benford_threshold
-            for res in results
-        ) or suspicious_count > 1
+    # Header channels: metadata, whitespace padding and tensor names can hide data outside the tensors.
+    from aegis.formatscan import scan_safetensors_header
+
+    try:
+        header_result = scan_safetensors_header(model_path)
+    except (OSError, ValueError) as e:  # json.JSONDecodeError and UnicodeDecodeError are ValueErrors
+        console.print(f"[bold red]Header scan failed:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR)
+    level = worst(
+        [tensor_severity(r) for r in results]
+        + [HEADER_CHANNEL_SEVERITY.get(f.channel, "medium") for f in header_result.findings]
+    )
+    if header_result.findings:
+        header_table = Table(title="Header Channel Findings", box=box.ROUNDED, header_style="bold magenta")
+        header_table.add_column("Channel", style="cyan")
+        header_table.add_column("Where", overflow="ellipsis")
+        header_table.add_column("Finding")
+        header_table.add_column("Treatment", justify="center")
+        for finding in header_result.findings:
+            header_table.add_row(finding.channel, finding.where, finding.message, finding.treatment)
+        console.print(header_table)
+
+    treatment_lines = _treatment_lines(results, header_result, model_path)
+    if treatment_lines:
+        console.print(Panel("\n".join(treatment_lines), title="🔧 Recommended Treatment", border_style="cyan"))
+
+    if suspicious_count > 0 or header_result.is_suspicious:
+        # Structural evidence (overwritten floats, structured low bits, unreadable data,
+        # or a payload in the header) is stronger than a pooled-entropy hit, so it alone raises CRITICAL.
+        is_critical = structural_count > 0 or header_result.is_suspicious
         badge = get_risk_badge("CRITICAL" if is_critical else "SUSPICIOUS")
         console.print(
             Panel(
                 f"{badge}\n\n"
                 f"[bold red]Adversarial Threat Detected:[/bold red] {suspicious_count} suspicious tensor(s) found!\n"
-                "Tensors exhibit anomalous Shannon entropy or Benford's Law deviations indicative "
-                "of hidden steganographic malware or injected cryptographic payloads.",
+                "Tensors show structural evidence of overwritten floats, structured low-order bits, "
+                "unreadable data, or high whole-tensor entropy. Verify the model's provenance before use. "
+                "A structural hit is a strong signal; other hits warrant review.",
                 title="🚨 Static Steganography Scan Alert",
                 border_style="red" if is_critical else "yellow",
             )
@@ -216,7 +416,9 @@ def scan_command(
             Panel(
                 f"{badge}\n\n"
                 "[bold green]No steganographic anomalies detected.[/bold green]\n"
-                "All tensor entropy and Benford's Law distributions conform to expected neural network profiles.",
+                "Entropy, sign/exponent lanes and low-order bit planes all conform to expected neural network profiles.\n"
+                "[dim]Note: a clean result rules out the signals above, not every possible payload. "
+                "Low-order bits that look random cannot be checked statistically; `aegis disarm` removes them.[/dim]",
                 title="✅ Model Clean",
                 border_style="green",
             )
@@ -227,9 +429,23 @@ def scan_command(
             json.dump({
                 "model_path": str(model_path.resolve()),
                 "suspicious_count": suspicious_count,
+                "max_severity": level,
+                "fail_on": fail_on.value,
                 "tensors": report_data,
+                "header_findings": [
+                    {
+                        "channel": f.channel,
+                        "where": f.where,
+                        "message": f.message,
+                        "treatment": f.treatment,
+                        "severity": HEADER_CHANNEL_SEVERITY.get(f.channel, "medium"),
+                    }
+                    for f in header_result.findings
+                ],
             }, f, indent=2)
         console.print(f"[dim]Report saved to: {json_output}[/dim]")
+
+    raise typer.Exit(code=exit_code_for(level, fail_on.value))
 
 
 @app.command(name="fuzz")
@@ -255,6 +471,16 @@ def fuzz_command(
         "--input-shape",
         "-s",
         help="Comma-delimited input tensor dimensions (e.g. '1,10' or '1,3,224,224').",
+    ),
+    seed: int = typer.Option(
+        0,
+        "--seed",
+        help="Random seed for calibration and fuzzing inputs. Fixed by default so reports are reproducible.",
+    ),
+    trust_pickle: bool = typer.Option(
+        False,
+        "--trust-pickle",
+        help="Allow loading a pickled nn.Module. Loading one runs code from the file, so use only for files you trust.",
     ),
     json_output: Optional[Path] = typer.Option(
         None,
@@ -348,17 +574,37 @@ def fuzz_command(
             try:
                 model = torch.jit.load(str(model_path), map_location="cpu")
             except Exception:
-                model = torch.load(str(model_path), map_location="cpu", weights_only=False)
+                # A pickled nn.Module runs code when loaded, so it is refused unless the
+                # user explicitly trusts the file with --trust-pickle.
+                model = torch.load(str(model_path), map_location="cpu", weights_only=not trust_pickle)
         except Exception as e:
             console.print(
                 Panel(
                     f"[bold red]Failed to load model file:[/bold red]\n{e}\n\n"
-                    "[yellow]Ensure the file contains an executable PyTorch nn.Module or TorchScript model.[/yellow]",
+                    "[yellow]Expected a TorchScript model. A pickled nn.Module runs code when loaded, so it is "
+                    "refused by default. Re-save as TorchScript, or pass --trust-pickle only for a file you trust.[/yellow]",
                     title="❌ Model Load Error",
                     border_style="red",
                 )
             )
             raise typer.Exit(code=1)
+
+    # PyTorch does not allow forward hooks on TorchScript modules, so their activations
+    # cannot be inspected. Fail here with a clear message instead of partway through fuzzing.
+    if isinstance(model, torch.jit.ScriptModule):
+        console.print(
+            Panel(
+                "[bold red]TorchScript models cannot be fuzzed.[/bold red]\n\n"
+                "PyTorch does not support forward hooks on TorchScript modules, so layer activations "
+                "cannot be recorded.\n"
+                "Fuzz an eager nn.Module instead: save it with `torch.save(model, path)` and pass "
+                "[bold green]--trust-pickle[/bold green] for a file you trust, or use the Python API "
+                "with the model's architecture.",
+                title="ℹ️ Unsupported Model Format",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(code=1)
 
     if hasattr(model, "eval"):
         model.eval()
@@ -375,14 +621,10 @@ def fuzz_command(
         except (StopIteration, Exception):
             pass
 
-    # 7. Initialize Fuzzer
+    # 7. Initialize Fuzzer. Automated mode runs the full suite (Gaussian scales, boundary
+    #    values, patch triggers) with a fixed seed, so repeated runs give the same report.
     fuzzer = DynamicTrojanFuzzer(model, spike_threshold=spike_threshold)
     baseline_input = torch.zeros(shape, dtype=target_dtype, device=target_device)
-
-    def input_generator(step: int) -> torch.Tensor:
-        scale = 1.0 + (step % 5) * 0.5
-        noise = torch.randn(shape, dtype=torch.float32) * scale
-        return noise.to(dtype=target_dtype, device=target_device)
 
     # 8. Execute Fuzzing with Live Rich Progress
     with Progress(
@@ -403,8 +645,11 @@ def fuzz_command(
 
         try:
             report = fuzzer.run_fuzzing(
-                sample_inputs_generator=input_generator,
                 baseline_input=baseline_input,
+                input_shape=shape,
+                seed=seed,
+                input_dtype=target_dtype,
+                input_device=target_device,
                 num_iterations=iterations,
                 progress_callback=on_step_progress,
             )
@@ -434,13 +679,13 @@ def fuzz_command(
     )
     table.add_column("Layer / Sub-Network", style="cyan", overflow="ellipsis")
     table.add_column("Peak Fuzzed L_inf", justify="right")
-    table.add_column("Spike Ratio", justify="right")
+    table.add_column("Spike Ratio (vs clean)", justify="right")
     table.add_column("Layer Status", justify="center")
 
-    base_val = max(report.baseline_l_inf, 1e-6)
     for lname in sorted(layer_peaks.keys()):
         peak_val = layer_peaks[lname]
-        ratio = peak_val / base_val
+        # The same ratio the detector flags: fuzzed L_inf over the clean L_inf at matched magnitude.
+        ratio = report.layer_spike_ratios.get(lname, 0.0)
         is_susp = lname in report.suspicious_layers
         is_peak = (lname == overall_peak_layer)
 
@@ -533,6 +778,8 @@ def fuzz_command(
             "spike_threshold": spike_threshold,
             "suspected_trojan": report.suspected_trojan,
             "suspicious_layers": report.suspicious_layers,
+            "layer_spike_ratios": report.layer_spike_ratios,
+            "seed": seed,
             "peak_layer": overall_peak_layer,
             "layer_peaks": layer_peaks,
             "iteration_reports": iteration_report_payload,
@@ -540,6 +787,70 @@ def fuzz_command(
         with open(json_output, "w") as f:
             json.dump(report_json, f, indent=2)
         console.print(f"[dim]Fuzzing report saved to: {json_output}[/dim]")
+
+
+@app.command(name="disarm")
+def disarm_command(
+    model_path: Path = typer.Argument(..., help="Path to the .safetensors model to disarm."),
+    output_path: Path = typer.Argument(..., help="Where to write the disarmed copy. Must differ from the input."),
+    low_bits: int = typer.Option(
+        8,
+        "--low-bits",
+        "-k",
+        help="Number of low mantissa bits to round away. Use at least the payload width (8 covers payloads up to 8 bits per weight).",
+    ),
+    strip_metadata: bool = typer.Option(
+        False,
+        "--strip-metadata",
+        help="Also remove the __metadata__ block, where a payload can hide outside the tensors.",
+    ),
+):
+    """Round away low-order mantissa bits so hidden payloads are destroyed without detecting them.
+
+    Each weight changes by at most a few units in its last kept place. Use this
+    when a scan is inconclusive, or before deploying a model from an untrusted source.
+    """
+    print_banner()
+
+    if not model_path.exists():
+        console.print(f"[bold red]Error:[/bold red] Model file not found at: {model_path}")
+        raise typer.Exit(code=1)
+    if model_path.resolve() == output_path.resolve():
+        console.print("[bold red]Error:[/bold red] Output must be a different file from the input.")
+        raise typer.Exit(code=1)
+    if not TORCH_AVAILABLE:
+        console.print(
+            Panel(
+                "[bold red]PyTorch is required for disarming.[/bold red]\n\n"
+                "Install with: [bold green]pip install -e .[fuzzer][/bold green]",
+                title="⚠️ PyTorch Engine Missing",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    from aegis.disarm import disarm_file
+
+    try:
+        with console.status("[bold green]Rounding low mantissa bits...[/bold green]"):
+            report = disarm_file(model_path, output_path, low_bits=low_bits, strip_metadata=strip_metadata)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    console.print(
+        Panel(
+            f"[bold]Disarmed {report.tensors_disarmed} floating-point tensor(s)[/bold] "
+            f"({report.tensors_skipped} non-float tensor(s) copied unchanged).\n\n"
+            f"Low bits rounded away: [cyan]{report.low_bits}[/cyan]\n"
+            f"Largest per-weight relative change: [cyan]{report.max_relative_change:.3e}[/cyan]\n\n"
+            f"Written to: [cyan]{output_path.resolve()}[/cyan]\n"
+            "[dim]Re-run `aegis scan` on the output to confirm the structure of the file, "
+            "and check accuracy on your own evaluation data.[/dim]",
+            title="🛡️ Disarm Complete",
+            border_style="green",
+        )
+    )
 
 
 @app.command(name="doctor")

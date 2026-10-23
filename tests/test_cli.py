@@ -109,10 +109,10 @@ def test_risk_badge_formatting():
 
 
 def test_cli_scan_missing_model(tmp_path):
-    """Verify that `aegis scan` exits with error code 1 when model file is missing."""
+    """Verify that `aegis scan` exits with error code 2 (scan could not run) when the model file is missing."""
     missing_file = tmp_path / "missing.safetensors"
     result = run_cli("scan", str(missing_file))
-    assert result.returncode == 1
+    assert result.returncode == 2
     assert "not found" in result.stdout.lower()
 
 
@@ -147,6 +147,8 @@ def test_cli_fuzz_mocked_execution(tmp_path):
     mock_torch = MagicMock()
     mock_torch.zeros.return_value = MagicMock()
     mock_torch.randn.return_value = MagicMock()
+    # The CLI checks isinstance(model, torch.jit.ScriptModule), which needs a real class.
+    mock_torch.jit.ScriptModule = type("ScriptModule", (), {})
     mock_torch.load.return_value = MagicMock()
 
     with patch("aegis.cli.TORCH_AVAILABLE", True), \
