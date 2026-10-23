@@ -14,6 +14,7 @@ try:
         benford_law_stats,
         mantissa_bit_plane_entropy,
         scan_safetensors,
+        scan_tensor_bytes,
         shannon_entropy_chunked,
         shannon_entropy_bytes,
     )
@@ -24,6 +25,7 @@ except ImportError:
     CORE_AVAILABLE = False
     TensorScanResult = None  # type: ignore
     scan_safetensors = None  # type: ignore
+    scan_tensor_bytes = None  # type: ignore
     shannon_entropy_chunked = None  # type: ignore
     shannon_entropy_bytes = None  # type: ignore
     mantissa_bit_plane_entropy = None  # type: ignore
@@ -53,6 +55,7 @@ __all__ = [
     "TORCH_AVAILABLE",
     "TensorScanResult",
     "scan_safetensors",
+    "scan_tensor_bytes",
     "shannon_entropy_bytes",
     "shannon_entropy_chunked",
     "mantissa_bit_plane_entropy",

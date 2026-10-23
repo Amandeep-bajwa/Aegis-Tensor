@@ -348,6 +348,153 @@ fn has_diverse_values(data: &[u8], width: usize) -> bool {
     sampled > 0 && seen.len() * 2 >= sampled
 }
 
+/// Thresholds shared by every tensor rule.
+#[derive(Clone, Copy)]
+struct Thresholds {
+    entropy: f64,
+    benford: Option<f64>,
+    exponent: f64,
+    plane: f64,
+}
+
+/// Apply every tensor rule to one tensor's raw little-endian bytes. Used for safetensors
+/// files and, through `scan_tensor_bytes`, for tensors read from other formats.
+fn analyze_tensor(name: &str, dtype: Dtype, shape: Vec<usize>, data_bytes: &[u8], t: Thresholds) -> TensorScanResult {
+    let num_elements: usize = shape.iter().product();
+
+    let entropy = shannon_entropy_bytes(data_bytes);
+
+    let is_float = matches!(dtype, Dtype::F32 | Dtype::F16 | Dtype::BF16);
+    let width = match dtype {
+        Dtype::F32 => 4,
+        Dtype::F16 | Dtype::BF16 => 2,
+        _ => 1,
+    };
+
+    let float_values = match dtype {
+        Dtype::F32 => Some(decode_f32_bytes(data_bytes)),
+        Dtype::F16 => Some(decode_f16_bytes(data_bytes)),
+        Dtype::BF16 => Some(decode_bf16_bytes(data_bytes)),
+        _ => None,
+    };
+    let out_of_range_fraction = float_values
+        .as_ref()
+        .filter(|values| !values.is_empty())
+        .map(|values| {
+            let bad = values
+                .iter()
+                .filter(|v| !v.is_finite() || v.abs() > MAX_PLAUSIBLE_MAGNITUDE)
+                .count();
+            bad as f64 / values.len() as f64
+        });
+    let benford_stats = float_values.as_ref().map(|values| calculate_benford_stats(values));
+    let benford_mad = benford_stats.map(|s| s.mad).unwrap_or(0.0);
+
+    let lane_entropies: Vec<f64> = if is_float {
+        (0..width)
+            .map(|lane| corrected_entropy(&byte_lane(data_bytes, width, lane)))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let exponent_lane_entropy = if is_float && num_elements >= MIN_LANE_ELEMENTS {
+        lane_entropies.last().copied()
+    } else {
+        None
+    };
+
+    // Only mixed planes are examined. A constant plane (upcast low precision,
+    // or bits zeroed by `aegis disarm`) is not a payload.
+    let low_plane_entropy = if is_float
+        && num_elements >= MIN_PLANE_ELEMENTS
+        && has_diverse_values(data_bytes, width)
+    {
+        (0..2u32)
+            .filter(|&plane| {
+                let ones = plane_one_fraction(data_bytes, width, plane);
+                ones > 0.01 && ones < 0.99
+            })
+            .map(|plane| plane_entropy(data_bytes, width, plane))
+            .reduce(f64::min)
+    } else {
+        None
+    };
+
+    let mut anomaly_reasons = Vec::new();
+    let mut rules: Vec<String> = Vec::new();
+
+    // Rule 1: whole-tensor entropy (encrypted or compressed blob).
+    if data_bytes.len() >= MIN_BLOB_BYTES && entropy > t.entropy {
+        rules.push("pooled_entropy".to_string());
+        anomaly_reasons.push(format!(
+            "Unusually high Shannon entropy ({:.4} > threshold {:.4}) - possible encrypted/compressed payload",
+            entropy, t.entropy
+        ));
+    }
+
+    // Rule 2: sign/exponent lane is random-looking, so the float values were overwritten.
+    if let Some(lane_entropy) = exponent_lane_entropy {
+        if lane_entropy > t.exponent {
+            rules.push("exponent_lane".to_string());
+            anomaly_reasons.push(format!(
+                "Sign/exponent bytes are near-uniform ({:.4} > threshold {:.4}) - float values overwritten with encrypted or compressed data",
+                lane_entropy, t.exponent
+            ));
+        }
+    }
+
+    // Rule 2b: implausible magnitudes or non-finite values (overwritten floats).
+    if let Some(fraction) = out_of_range_fraction {
+        if num_elements >= MIN_LANE_ELEMENTS && fraction > OUT_OF_RANGE_FRACTION {
+            rules.push("out_of_range".to_string());
+            anomaly_reasons.push(format!(
+                "{:.2}% of values are non-finite or above {:.0} in magnitude - float values overwritten with random data",
+                fraction * 100.0,
+                MAX_PLAUSIBLE_MAGNITUDE
+            ));
+        }
+    }
+
+    // Rule 3: low mantissa bits are structured (payload hidden in the least significant bits).
+    if let Some(plane_entropy) = low_plane_entropy {
+        if plane_entropy < t.plane {
+            rules.push("low_plane".to_string());
+            anomaly_reasons.push(format!(
+                "Low mantissa bit planes are structured ({:.4} < floor {:.4}) - possible payload hidden in the least significant bits",
+                plane_entropy, t.plane
+            ));
+        }
+    }
+
+    // Optional: Benford's Law, only with enough samples and an explicit threshold.
+    if let (Some(threshold), Some(stats)) = (t.benford, benford_stats) {
+        if stats.valid_count >= MIN_BENFORD_SAMPLES && benford_mad > threshold {
+            rules.push("benford".to_string());
+            anomaly_reasons.push(format!(
+                "Benford's Law MAD deviation ({:.4} > threshold {:.4}) - non-natural digit distribution",
+                benford_mad, threshold
+            ));
+        }
+    }
+
+    TensorScanResult {
+        name: name.to_string(),
+        dtype: format!("{:?}", dtype),
+        shape,
+        num_elements,
+        entropy,
+        benford_mad,
+        lane_entropies,
+        exponent_lane_entropy,
+        low_plane_entropy,
+        out_of_range_fraction,
+        is_suspicious: !anomaly_reasons.is_empty(),
+        rules,
+        anomaly_reasons,
+    }
+}
+
 /// Zero-copy scan of a .safetensors model file using memory mapping.
 ///
 /// Each tensor is checked with three rules:
@@ -392,6 +539,12 @@ pub fn scan_safetensors(
     let tensor_names: Vec<String> = tensors.names().into_iter().map(|s| s.to_string()).collect();
 
     // Parallel analysis using Rayon
+    let thresholds = Thresholds {
+        entropy: entropy_threshold,
+        benford: benford_mad_threshold,
+        exponent: exponent_entropy_threshold,
+        plane: plane_floor,
+    };
     let results: Vec<TensorScanResult> = tensor_names
         .par_iter()
         .map(|name| {
@@ -420,152 +573,80 @@ pub fn scan_safetensors(
                     };
                 }
             };
-            let data_bytes = tensor_view.data();
-            let shape = tensor_view.shape().to_vec();
-            let dtype = tensor_view.dtype();
-            let num_elements: usize = shape.iter().product();
-
-            let entropy = shannon_entropy_bytes(data_bytes);
-
-            let is_float = matches!(dtype, Dtype::F32 | Dtype::F16 | Dtype::BF16);
-            let width = match dtype {
-                Dtype::F32 => 4,
-                Dtype::F16 | Dtype::BF16 => 2,
-                _ => 1,
-            };
-
-            let float_values = match dtype {
-                Dtype::F32 => Some(decode_f32_bytes(data_bytes)),
-                Dtype::F16 => Some(decode_f16_bytes(data_bytes)),
-                Dtype::BF16 => Some(decode_bf16_bytes(data_bytes)),
-                _ => None,
-            };
-            let out_of_range_fraction = float_values
-                .as_ref()
-                .filter(|values| !values.is_empty())
-                .map(|values| {
-                    let bad = values
-                        .iter()
-                        .filter(|v| !v.is_finite() || v.abs() > MAX_PLAUSIBLE_MAGNITUDE)
-                        .count();
-                    bad as f64 / values.len() as f64
-                });
-            let benford_stats = float_values.as_ref().map(|values| calculate_benford_stats(values));
-            let benford_mad = benford_stats.map(|s| s.mad).unwrap_or(0.0);
-
-            let lane_entropies: Vec<f64> = if is_float {
-                (0..width)
-                    .map(|lane| corrected_entropy(&byte_lane(data_bytes, width, lane)))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            let exponent_lane_entropy = if is_float && num_elements >= MIN_LANE_ELEMENTS {
-                lane_entropies.last().copied()
-            } else {
-                None
-            };
-
-            // Only mixed planes are examined. A constant plane (upcast low precision,
-            // or bits zeroed by `aegis disarm`) is not a payload.
-            let low_plane_entropy = if is_float
-                && num_elements >= MIN_PLANE_ELEMENTS
-                && has_diverse_values(data_bytes, width)
-            {
-                (0..2u32)
-                    .filter(|&plane| {
-                        let ones = plane_one_fraction(data_bytes, width, plane);
-                        ones > 0.01 && ones < 0.99
-                    })
-                    .map(|plane| plane_entropy(data_bytes, width, plane))
-                    .reduce(f64::min)
-            } else {
-                None
-            };
-
-            let mut anomaly_reasons = Vec::new();
-            let mut rules: Vec<String> = Vec::new();
-
-            // Rule 1: whole-tensor entropy (encrypted or compressed blob).
-            if data_bytes.len() >= MIN_BLOB_BYTES && entropy > entropy_threshold {
-                rules.push("pooled_entropy".to_string());
-                anomaly_reasons.push(format!(
-                    "Unusually high Shannon entropy ({:.4} > threshold {:.4}) - possible encrypted/compressed payload",
-                    entropy, entropy_threshold
-                ));
-            }
-
-            // Rule 2: sign/exponent lane is random-looking, so the float values were overwritten.
-            if let Some(lane_entropy) = exponent_lane_entropy {
-                if lane_entropy > exponent_entropy_threshold {
-                    rules.push("exponent_lane".to_string());
-                    anomaly_reasons.push(format!(
-                        "Sign/exponent bytes are near-uniform ({:.4} > threshold {:.4}) - float values overwritten with encrypted or compressed data",
-                        lane_entropy, exponent_entropy_threshold
-                    ));
-                }
-            }
-
-            // Rule 2b: implausible magnitudes or non-finite values (overwritten floats).
-            if let Some(fraction) = out_of_range_fraction {
-                if num_elements >= MIN_LANE_ELEMENTS && fraction > OUT_OF_RANGE_FRACTION {
-                    rules.push("out_of_range".to_string());
-                    anomaly_reasons.push(format!(
-                        "{:.2}% of values are non-finite or above {:.0} in magnitude - float values overwritten with random data",
-                        fraction * 100.0,
-                        MAX_PLAUSIBLE_MAGNITUDE
-                    ));
-                }
-            }
-
-            // Rule 3: low mantissa bits are structured (payload hidden in the least significant bits).
-            if let Some(plane_entropy) = low_plane_entropy {
-                if plane_entropy < plane_floor {
-                    rules.push("low_plane".to_string());
-                    anomaly_reasons.push(format!(
-                        "Low mantissa bit planes are structured ({:.4} < floor {:.4}) - possible payload hidden in the least significant bits",
-                        plane_entropy, plane_floor
-                    ));
-                }
-            }
-
-            // Optional: Benford's Law, only with enough samples and an explicit threshold.
-            if let (Some(threshold), Some(stats)) = (benford_mad_threshold, benford_stats) {
-                if stats.valid_count >= MIN_BENFORD_SAMPLES && benford_mad > threshold {
-                    rules.push("benford".to_string());
-                    anomaly_reasons.push(format!(
-                        "Benford's Law MAD deviation ({:.4} > threshold {:.4}) - non-natural digit distribution",
-                        benford_mad, threshold
-                    ));
-                }
-            }
-
-            TensorScanResult {
-                name: name.clone(),
-                dtype: format!("{:?}", dtype),
-                shape,
-                num_elements,
-                entropy,
-                benford_mad,
-                lane_entropies,
-                exponent_lane_entropy,
-                low_plane_entropy,
-                out_of_range_fraction,
-                is_suspicious: !anomaly_reasons.is_empty(),
-                rules,
-                anomaly_reasons,
-            }
+            analyze_tensor(name, tensor_view.dtype(), tensor_view.shape().to_vec(), tensor_view.data(), thresholds)
         })
         .collect();
 
     Ok(results)
 }
 
+/// (dtype, bytes per element) for the dtype names used by safetensors.
+fn parse_dtype(name: &str) -> Option<(Dtype, usize)> {
+    Some(match name {
+        "F64" => (Dtype::F64, 8),
+        "F32" => (Dtype::F32, 4),
+        "F16" => (Dtype::F16, 2),
+        "BF16" => (Dtype::BF16, 2),
+        "I64" => (Dtype::I64, 8),
+        "I32" => (Dtype::I32, 4),
+        "I16" => (Dtype::I16, 2),
+        "I8" => (Dtype::I8, 1),
+        "U64" => (Dtype::U64, 8),
+        "U32" => (Dtype::U32, 4),
+        "U16" => (Dtype::U16, 2),
+        "U8" => (Dtype::U8, 1),
+        "BOOL" => (Dtype::BOOL, 1),
+        _ => return None,
+    })
+}
+
+/// Apply the safetensors tensor rules to one tensor read from another format
+/// (GGUF, ONNX, Keras). `data` is the tensor's raw little-endian bytes.
+#[pyfunction]
+#[pyo3(signature = (
+    name,
+    dtype,
+    shape,
+    data,
+    entropy_threshold = 7.92,
+    benford_mad_threshold = None,
+    exponent_entropy_threshold = 6.5,
+    plane_floor = 7.5
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn scan_tensor_bytes(
+    name: &str,
+    dtype: &str,
+    shape: Vec<usize>,
+    data: &[u8],
+    entropy_threshold: f64,
+    benford_mad_threshold: Option<f64>,
+    exponent_entropy_threshold: f64,
+    plane_floor: f64,
+) -> PyResult<TensorScanResult> {
+    let (parsed, width) = parse_dtype(dtype)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype)))?;
+    let expected = shape.iter().product::<usize>() * width;
+    if expected != data.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "tensor '{}': shape {:?} of {} needs {} bytes, got {}",
+            name, shape, dtype, expected, data.len()
+        )));
+    }
+    let thresholds = Thresholds {
+        entropy: entropy_threshold,
+        benford: benford_mad_threshold,
+        exponent: exponent_entropy_threshold,
+        plane: plane_floor,
+    };
+    Ok(analyze_tensor(name, parsed, shape, data, thresholds))
+}
+
 /// Aegis-Tensor core native extension module.
 #[pymodule]
 fn aegis_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TensorScanResult>()?;
+    m.add_function(wrap_pyfunction!(scan_tensor_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(shannon_entropy_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(shannon_entropy_chunked, m)?)?;
     m.add_function(wrap_pyfunction!(mantissa_bit_plane_entropy, m)?)?;
