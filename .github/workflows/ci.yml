@@ -54,6 +54,11 @@ jobs:
         run: |
           source venv/bin/activate
           python -c "import torch; assert torch.version.cuda is None, torch.version.cuda; print('torch', torch.__version__)"
+      - name: Allow unprivileged user namespaces (so the fuzz sandbox tests run, not skip)
+        # Ubuntu 24.04 restricts them through AppArmor; `unshare -rn` is the Linux sandbox.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          unshare -rn true && echo "unshare -rn available"
       - name: Run test suite (CLI, exit codes, scanners, disarm, fuzzer, threat matrix)
         run: |
           source venv/bin/activate

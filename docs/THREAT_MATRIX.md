@@ -4,6 +4,27 @@ What Aegis-Tensor detects, where it points, and what it can treat. Each in-scope
 is backed by a test in `tests/test_threat_matrix.py`. Out-of-scope rows are listed
 so their absence is a decision, not an oversight.
 
+## Threat model
+
+**Attacker:** anyone who can publish or modify a model file (uploader, compromised account or
+mirror, insider), with full knowledge of Aegis's rules.
+**Victim:** a user who downloads and runs open-weight models locally.
+
+Two consequences:
+
+- **The attacker knows the thresholds.** The code is public, so a payload can be tuned to sit
+  just under any statistical threshold. Detection is therefore not the safety net. `aegis disarm`
+  is the recommended treatment for every file in a format it supports, including files with no
+  findings, because it removes low-order-bit payloads whether or not they were detected. "No
+  known findings" means only that nothing known was found.
+- **Victims mostly run GGUF.** Local runtimes (Ollama, LM Studio, llama.cpp) load GGUF; Mac users
+  also pull MLX models, which are safetensors. GGUF metadata carries its own code-execution route
+  through Jinja chat templates (T26).
+
+**Scope rule.** Aegis answers one question: is this model file safe to load and run? Checks that
+take a model file as input are built in, or run as optional engines inside the Aegis verdict.
+Checks that need a running application are out of scope (section F).
+
 **Status key:** `tested` = covered by a passing test · `gap` = a known, strict-xfail
 test documents it · `limit` = detected only in part, with the limit stated · `out` = out of scope.
 
@@ -94,7 +115,7 @@ Limits:
 | Data poisoning | Needs the training data and pipeline | Data provenance and training-pipeline controls |
 | Adversarial examples at inference | Needs runtime inputs and a threat model per use case | Adversarial robustness testing against the deployed model |
 | Membership inference, model extraction | Needs query access and privacy analysis | Query rate limits, differential privacy |
-| Prompt injection, insecure output handling (LLM apps) | A property of the deployed application, not the weights | Application-level input and output controls |
+| Prompt injection, jailbreaks, insecure output handling (LLM apps) | A property of the deployed application, not the weights | Test the running app with a red-teaming tool such as garak or PyRIT |
 | Supply-chain identity (who published the model) | Needs signing infrastructure, not file analysis | Model signing and provenance attestation |
 
 ## Known gaps, in priority order
