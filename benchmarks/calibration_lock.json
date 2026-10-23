@@ -27,9 +27,17 @@
     "error": null,
     "sha": "f8027fd0eaeea54caa13c31d31b9fdc459c38b49"
   },
+  "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF": {
+    "error": null,
+    "sha": "593b5a2e04c8f3e4ee880263f93e0bd2901ad47f"
+  },
   "MIT/ast-finetuned-audioset-10-10-0.4593": {
     "error": null,
     "sha": "f826b80d28226b62986cc218e5cec390b1096902"
+  },
+  "NousResearch/Hermes-3-Llama-3.1-8B-GGUF": {
+    "error": null,
+    "sha": "307a5dfb59aa38d88b6cfd32f44b8ad7c1da9fb8"
   },
   "Qwen/Qwen2.5-0.5B": {
     "error": null,
@@ -42,6 +50,10 @@
   "Qwen/Qwen2.5-0.5B-Instruct-AWQ": {
     "error": null,
     "sha": "db09cd27ead7fee40cdee309693cf83601b9c899"
+  },
+  "Qwen/Qwen2.5-0.5B-Instruct-GGUF": {
+    "error": null,
+    "sha": "9217f5db79a29953eb74d5343926648285ec7e67"
   },
   "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4": {
     "error": null,
@@ -59,9 +71,21 @@
     "error": null,
     "sha": "a4d4d713148f198ad81770c44a6fb14426ce7479"
   },
+  "Qwen/Qwen2.5-7B-Instruct-GGUF": {
+    "error": null,
+    "sha": "bb5d59e06d9551d752d08b292a50eb208b07ab1f"
+  },
   "Qwen/Qwen3-0.6B": {
     "error": null,
     "sha": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "Qwen/Qwen3-0.6B-GGUF": {
+    "error": null,
+    "sha": "23749fefcc72300e3a2ad315e1317431b06b590a"
+  },
+  "Qwen/Qwen3-8B-GGUF": {
+    "error": null,
+    "sha": "7c41481f57cb95916b40956ab2f0b139b296d974"
   },
   "RedHatAI/Qwen2.5-0.5B-Instruct-FP8-dynamic": {
     "error": null,
@@ -71,9 +95,17 @@
     "error": null,
     "sha": "82a37760796d32b1411fe092ab5d4e227313294b"
   },
+  "TheBloke/Mistral-7B-Instruct-v0.2-GGUF": {
+    "error": null,
+    "sha": "3a6fbf4a41a1d52e415a4958cde6856d34b2db93"
+  },
   "TheBloke/TinyLlama-1.1B-Chat-v1.0-AWQ": {
     "error": null,
     "sha": "2e78382c2b2faaea451c75e11f8df72ddd2d1e39"
+  },
+  "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF": {
+    "error": null,
+    "sha": "52e7645ba7c309695bec7ac98f4f005b139cf465"
   },
   "TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ": {
     "error": null,
@@ -90,6 +122,50 @@
   "answerdotai/ModernBERT-base": {
     "error": null,
     "sha": "8949b909ec900327062f0ebf497f51aef5e6f0c8"
+  },
+  "bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF": {
+    "error": null,
+    "sha": "935d400c2ed1a29cc2a1045df25ec7998fb4dfe4"
+  },
+  "bartowski/Llama-3.2-1B-Instruct-GGUF": {
+    "error": null,
+    "sha": "067b946cf014b7c697f3654f621d577a3e3afd1c"
+  },
+  "bartowski/Llama-3.2-3B-Instruct-GGUF": {
+    "error": null,
+    "sha": "5ab33fa94d1d04e903623ae72c95d1696f09f9e8"
+  },
+  "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF": {
+    "error": null,
+    "sha": "bf5b95e96dac0462e2a09145ec66cae9a3f12067"
+  },
+  "bartowski/Mistral-7B-Instruct-v0.3-GGUF": {
+    "error": null,
+    "sha": "61fd4167fff3ab01ee1cfe0da183fa27a944db48"
+  },
+  "bartowski/Mistral-Nemo-Instruct-2407-GGUF": {
+    "error": null,
+    "sha": "a2dd64a0a76ea1bdb2bb6ab6fa5496b003c7c908"
+  },
+  "bartowski/Phi-3.5-mini-instruct-GGUF": {
+    "error": null,
+    "sha": "6d70da17e749a471ccb62ade694486011a75cda3"
+  },
+  "bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF": {
+    "error": null,
+    "sha": "1af47f78b1f9b0c242fabe43f7a365d5a67f3207"
+  },
+  "bartowski/SmolLM2-1.7B-Instruct-GGUF": {
+    "error": null,
+    "sha": "1f03464768bfcc0319fc50da8ff5fb20b6417ba2"
+  },
+  "bartowski/gemma-2-9b-it-GGUF": {
+    "error": null,
+    "sha": "d731033f3dc4018261fd39896e50984d398b4ac5"
+  },
+  "bartowski/granite-3.1-2b-instruct-GGUF": {
+    "error": null,
+    "sha": "e47b8b46c04cede00f9e19d5a846551b14b2efce"
   },
   "bigscience/bloom-560m": {
     "error": null,
@@ -143,6 +219,10 @@
     "error": null,
     "sha": "22aad52d435eb6dbaf354bdad9b0da84ce7d6156"
   },
+  "ggml-org/SmolLM3-3B-GGUF": {
+    "error": null,
+    "sha": "4965cb60b150737b68a0408c36aeefb65078f894"
+  },
   "google-bert/bert-base-uncased": {
     "error": null,
     "sha": "86b5e0934494bd15c9632b12f734a8a67f723594"
@@ -167,6 +247,10 @@
     "error": null,
     "sha": "3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3"
   },
+  "ibm-granite/granite-3.3-2b-instruct-GGUF": {
+    "error": null,
+    "sha": "7cdf86ccd1f1bb3491c9b7017b033f2e51367397"
+  },
   "intfloat/e5-small-v2": {
     "error": null,
     "sha": "ffb93f3bd4047442299a41ebb6fa998a38507c52"
@@ -174,6 +258,26 @@
   "laion/clap-htsat-unfused": {
     "error": null,
     "sha": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"
+  },
+  "lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF": {
+    "error": null,
+    "sha": "8601e6db71269a2b12255ebdf09ab75becf22cc8"
+  },
+  "lmstudio-community/Qwen2.5-Coder-7B-Instruct-GGUF": {
+    "error": null,
+    "sha": "ba62cce5619ff5abbe5eceefab7caa4b11c267bd"
+  },
+  "lmstudio-community/Qwen3-4B-GGUF": {
+    "error": null,
+    "sha": "aaffcf9c16d545f8a889846b98676ddf359aa9e9"
+  },
+  "lmstudio-community/gemma-2-2b-it-GGUF": {
+    "error": null,
+    "sha": "6aa72da804ad76c5dc862867bfba6256de9172c7"
+  },
+  "microsoft/Phi-3-mini-4k-instruct-gguf": {
+    "error": null,
+    "sha": "a64113399c2f6b8ad3e11c394733a2ddadaa7f33"
   },
   "microsoft/deberta-v3-small": {
     "error": null,
@@ -190,6 +294,62 @@
   "microsoft/wavlm-base-plus": {
     "error": null,
     "sha": "4c66d4806a428f2e922ccfa1a962776e232d487b"
+  },
+  "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit": {
+    "error": null,
+    "sha": "933185be1b8f81d9a21dcfa15ff73470d3545240"
+  },
+  "mlx-community/Llama-3.2-1B-Instruct-4bit": {
+    "error": null,
+    "sha": "08231374eeacb049a0eade7922910865b8fce912"
+  },
+  "mlx-community/Llama-3.2-1B-Instruct-bf16": {
+    "error": null,
+    "sha": "863c846a9ac6fad4e49e1743d52984dff262e953"
+  },
+  "mlx-community/Llama-3.2-3B-Instruct-4bit": {
+    "error": null,
+    "sha": "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
+  },
+  "mlx-community/Phi-3.5-mini-instruct-4bit": {
+    "error": null,
+    "sha": "7b2052fd882fe017300d4d42a4eb06a27b816af4"
+  },
+  "mlx-community/Qwen2.5-0.5B-Instruct-4bit": {
+    "error": null,
+    "sha": "a5339a4131f135d0fdc6a5c8b5bbed2753bbe0f3"
+  },
+  "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit": {
+    "error": null,
+    "sha": "b3252a2f97102b1fb1571fec2c9b27219a8536be"
+  },
+  "mlx-community/Qwen3-0.6B-4bit": {
+    "error": null,
+    "sha": "73e3e38d981303bc594367cd910ea6eb48349da8"
+  },
+  "mlx-community/Qwen3-0.6B-8bit": {
+    "error": null,
+    "sha": "11de96878523501bcaa86104e3c186de07ff9068"
+  },
+  "mlx-community/Qwen3-0.6B-bf16": {
+    "error": null,
+    "sha": "42096995f6402fde107068cf530136fe64b604f8"
+  },
+  "mlx-community/Qwen3-4B-4bit": {
+    "error": null,
+    "sha": "4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25"
+  },
+  "mlx-community/SmolLM2-360M-Instruct": {
+    "error": null,
+    "sha": "5d5e6fee5beb5d4d4d85e2203ef23e1230a9aac7"
+  },
+  "mlx-community/gemma-3-1b-it-4bit": {
+    "error": null,
+    "sha": "2d44e83dc9e80843d22fb941d3d699a0b1351aa6"
+  },
+  "mlx-community/gemma-3-1b-it-qat-4bit": {
+    "error": null,
+    "sha": "15fed4eafb456c6fcb2a1165f19ac609670ed14b"
   },
   "nomic-ai/nomic-embed-text-v1.5": {
     "error": null,
@@ -247,9 +407,37 @@
     "error": null,
     "sha": "491b427b45c94c7fb0e78b5474cc919aff584bbf"
   },
+  "unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF": {
+    "error": null,
+    "sha": "3cb4d15544a2a5e07439592b9a0965b6445fbd34"
+  },
+  "unsloth/Llama-3.2-1B-Instruct-GGUF": {
+    "error": null,
+    "sha": "b69aef112e9f895e6f98d7ae0949f72ff09aa401"
+  },
+  "unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF": {
+    "error": null,
+    "sha": "b750ec2299225e492f1bd27cab88a0a595fa848f"
+  },
   "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit": {
     "error": null,
     "sha": "216d96b52c97a3c8294776df8477592f6828981c"
+  },
+  "unsloth/Qwen3-4B-GGUF": {
+    "error": null,
+    "sha": "22c9fc8a8c7700b76a1789366280a6a5a1ad1120"
+  },
+  "unsloth/gemma-3-1b-it-GGUF": {
+    "error": null,
+    "sha": "f0b45be0aac41bd6a100a4b5734cad5f67255bfb"
+  },
+  "unsloth/gpt-oss-20b-GGUF": {
+    "error": null,
+    "sha": "d449b42d93e1c2c7bda5312f5c25c8fb91dfa9b4"
+  },
+  "unsloth/phi-4-GGUF": {
+    "error": null,
+    "sha": "5110b7771e8166d5530e73346a15aea096a8cb99"
   },
   "unsloth/tinyllama-bnb-4bit": {
     "error": null,
