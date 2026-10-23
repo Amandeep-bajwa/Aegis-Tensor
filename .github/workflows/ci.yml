@@ -17,15 +17,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Cargo Check
         run: cargo check --verbose
-      - name: Cargo Unit Tests (Zero entropy, Benford MAD, digit extraction)
+      - name: Cargo Unit Tests (entropy, byte lanes, bit planes, Benford)
         run: cargo test --no-default-features --verbose
 
   python-check:
-    name: Python Build & Integration Tests
+    name: Python ${{ matrix.python-version }} Build & Tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -33,19 +37,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Create virtual environment and install dependencies
+          python-version: ${{ matrix.python-version }}
+      - name: Create virtual environment and install CPU-only PyTorch
+        # Installed before the project so pip treats torch as satisfied and does not
+        # pull the multi-GB CUDA build from PyPI.
         run: |
           python -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip
-          pip install maturin pytest typer rich numpy safetensors
-      - name: Build Native Rust Extension
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build native extension and install with dev and fuzzer extras
         run: |
           source venv/bin/activate
-          maturin develop
-      - name: Run Test Suite (CLI, Entropy, Fuzzer)
+          pip install -e ".[dev,fuzzer]"
+      - name: Check torch is the CPU build
+        run: |
+          source venv/bin/activate
+          python -c "import torch; assert torch.version.cuda is None, torch.version.cuda; print('torch', torch.__version__)"
+      - name: Run test suite (CLI, exit codes, scanners, disarm, fuzzer, threat matrix)
         run: |
           source venv/bin/activate
           pytest -v tests/
-
