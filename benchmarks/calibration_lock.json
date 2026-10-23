@@ -1,0 +1,258 @@
+{
+  "BAAI/bge-small-en-v1.5": {
+    "error": null,
+    "sha": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
+  },
+  "EleutherAI/pythia-160m": {
+    "error": null,
+    "sha": "50f5173d932e8e61f858120bcb800b97af589f46"
+  },
+  "EleutherAI/pythia-410m": {
+    "error": null,
+    "sha": "9879c9b5f8bea9051dcb0e68dff21493d67e9d4f"
+  },
+  "FacebookAI/roberta-base": {
+    "error": null,
+    "sha": "e2da8e2f811d1448a5b465c236feacd80ffbac7b"
+  },
+  "FacebookAI/xlm-roberta-base": {
+    "error": null,
+    "sha": "e73636d4f797dec63c3081bb6ed5c7b0bb3f2089"
+  },
+  "HuggingFaceTB/SmolLM2-135M": {
+    "error": null,
+    "sha": "93efa2f097d58c2a74874c7e644dbc9b0cee75a2"
+  },
+  "HuggingFaceTB/SmolLM2-360M": {
+    "error": null,
+    "sha": "f8027fd0eaeea54caa13c31d31b9fdc459c38b49"
+  },
+  "MIT/ast-finetuned-audioset-10-10-0.4593": {
+    "error": null,
+    "sha": "f826b80d28226b62986cc218e5cec390b1096902"
+  },
+  "Qwen/Qwen2.5-0.5B": {
+    "error": null,
+    "sha": "060db6499f32faf8b98477b0a26969ef7d8b9987"
+  },
+  "Qwen/Qwen2.5-0.5B-Instruct": {
+    "error": null,
+    "sha": "7ae557604adf67be50417f59c2c2f167def9a775"
+  },
+  "Qwen/Qwen2.5-0.5B-Instruct-AWQ": {
+    "error": null,
+    "sha": "db09cd27ead7fee40cdee309693cf83601b9c899"
+  },
+  "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int4": {
+    "error": null,
+    "sha": "c34a4a91629f09f73a285f32dbd26106b033c654"
+  },
+  "Qwen/Qwen2.5-0.5B-Instruct-GPTQ-Int8": {
+    "error": null,
+    "sha": "c68601e5424e69cdaa6e073673e3c94db27b4397"
+  },
+  "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int4": {
+    "error": null,
+    "sha": "4f5a0e31008e2966e8f787964bcc4e1105e03dc3"
+  },
+  "Qwen/Qwen2.5-1.5B-Instruct-GPTQ-Int8": {
+    "error": null,
+    "sha": "a4d4d713148f198ad81770c44a6fb14426ce7479"
+  },
+  "Qwen/Qwen3-0.6B": {
+    "error": null,
+    "sha": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "RedHatAI/Qwen2.5-0.5B-Instruct-FP8-dynamic": {
+    "error": null,
+    "sha": "67c5c3a4f39629d3653b715527f363d86929841e"
+  },
+  "Salesforce/blip-image-captioning-base": {
+    "error": null,
+    "sha": "82a37760796d32b1411fe092ab5d4e227313294b"
+  },
+  "TheBloke/TinyLlama-1.1B-Chat-v1.0-AWQ": {
+    "error": null,
+    "sha": "2e78382c2b2faaea451c75e11f8df72ddd2d1e39"
+  },
+  "TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ": {
+    "error": null,
+    "sha": "9d4580af0f21bccafd762dcc50d0c7bac6273584"
+  },
+  "TinyLlama/TinyLlama-1.1B-Chat-v1.0": {
+    "error": null,
+    "sha": "fe8a4ea1ffedaf415f4da2f062534de366a451e6"
+  },
+  "albert/albert-base-v2": {
+    "error": null,
+    "sha": "8e2f239c5f8a2c0f253781ca60135db913e5c80c"
+  },
+  "answerdotai/ModernBERT-base": {
+    "error": null,
+    "sha": "8949b909ec900327062f0ebf497f51aef5e6f0c8"
+  },
+  "bigscience/bloom-560m": {
+    "error": null,
+    "sha": "ac2ae5fab2ce3f9f40dc79b5ca9f637430d24971"
+  },
+  "distilbert/distilbert-base-uncased": {
+    "error": null,
+    "sha": "12040accade4e8a0f71eabdb258fecc2e7e948be"
+  },
+  "distilbert/distilbert-base-uncased-finetuned-sst-2-english": {
+    "error": null,
+    "sha": "714eb0fa89d2f80546fda750413ed43d93601a13"
+  },
+  "distilbert/distilgpt2": {
+    "error": null,
+    "sha": "2290a62682d06624634c1f46a6ad5be0f47f38aa"
+  },
+  "facebook/bart-base": {
+    "error": null,
+    "sha": "aadd2ab0ae0c8268c7c9693540e9904811f36177"
+  },
+  "facebook/convnext-tiny-224": {
+    "error": null,
+    "sha": "6166b7613034066690a621d8bf25ffdf181a34f0"
+  },
+  "facebook/deit-small-patch16-224": {
+    "error": null,
+    "sha": "164deee347853469b97442b3817f22eece80c7e3"
+  },
+  "facebook/detr-resnet-50": {
+    "error": null,
+    "sha": "1d5f47bd3bdd2c4bbfa585418ffe6da5028b4c0b"
+  },
+  "facebook/dinov2-small": {
+    "error": null,
+    "sha": "ed25f3a31f01632728cabb09d1542f84ab7b0056"
+  },
+  "facebook/encodec_24khz": {
+    "error": null,
+    "sha": "c1dbe2ae3f1de713481a3b3e7c47f357092ee040"
+  },
+  "facebook/hubert-base-ls960": {
+    "error": null,
+    "sha": "dba3bb02fda4248b6e082697eee756de8fe8aa8a"
+  },
+  "facebook/opt-125m": {
+    "error": null,
+    "sha": "27dcfa74d334bc871f3234de431e71c6eeba5dd6"
+  },
+  "facebook/wav2vec2-base-960h": {
+    "error": null,
+    "sha": "22aad52d435eb6dbaf354bdad9b0da84ce7d6156"
+  },
+  "google-bert/bert-base-uncased": {
+    "error": null,
+    "sha": "86b5e0934494bd15c9632b12f734a8a67f723594"
+  },
+  "google-t5/t5-small": {
+    "error": null,
+    "sha": "df1b051c49625cf57a3d0d8d3863ed4d13564fe4"
+  },
+  "google/electra-small-discriminator": {
+    "error": null,
+    "sha": "fa8239aadc095e9164941d05878b98afe9b953c3"
+  },
+  "google/flan-t5-small": {
+    "error": null,
+    "sha": "0fc9ddf78a1e988dac52e2dac162b0ede4fd74ab"
+  },
+  "google/siglip-base-patch16-224": {
+    "error": null,
+    "sha": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed"
+  },
+  "google/vit-base-patch16-224": {
+    "error": null,
+    "sha": "3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3"
+  },
+  "intfloat/e5-small-v2": {
+    "error": null,
+    "sha": "ffb93f3bd4047442299a41ebb6fa998a38507c52"
+  },
+  "laion/clap-htsat-unfused": {
+    "error": null,
+    "sha": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"
+  },
+  "microsoft/deberta-v3-small": {
+    "error": null,
+    "sha": "a36c739020e01763fe789b4b85e2df55d6180012"
+  },
+  "microsoft/resnet-50": {
+    "error": null,
+    "sha": "34c2154c194f829b11125337b98c8f5f9965ff19"
+  },
+  "microsoft/swin-tiny-patch4-window7-224": {
+    "error": null,
+    "sha": "d00d478bfaf1f417d34a1186673ad4b4be264c51"
+  },
+  "microsoft/wavlm-base-plus": {
+    "error": null,
+    "sha": "4c66d4806a428f2e922ccfa1a962776e232d487b"
+  },
+  "nomic-ai/nomic-embed-text-v1.5": {
+    "error": null,
+    "sha": "e9b6763023c676ca8431644204f50c2b100d9aab"
+  },
+  "nvidia/segformer-b0-finetuned-ade-512-512": {
+    "error": null,
+    "sha": "489d5cd81a0b59fab9b7ea758d3548ebe99677da"
+  },
+  "openai-community/gpt2": {
+    "error": null,
+    "sha": "607a30d783dfa663caf39e06633721c8d4cfcd7e"
+  },
+  "openai-community/gpt2-medium": {
+    "error": null,
+    "sha": "6dcaa7a952f72f9298047fd5137cd6e4f05f41da"
+  },
+  "openai/clip-vit-base-patch32": {
+    "error": null,
+    "sha": "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
+  },
+  "openai/whisper-base": {
+    "error": null,
+    "sha": "e37978b90ca9030d5170a5c07aadb050351a65bb"
+  },
+  "openai/whisper-small": {
+    "error": null,
+    "sha": "973afd24965f72e36ca33b3055d56a652f456b4d"
+  },
+  "openai/whisper-tiny": {
+    "error": null,
+    "sha": "169d4a4341b33bc18d8881c4b69c2e104e1cc0af"
+  },
+  "sentence-transformers/all-MiniLM-L6-v2": {
+    "error": null,
+    "sha": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+  },
+  "sentence-transformers/all-mpnet-base-v2": {
+    "error": null,
+    "sha": "e8c3b32edf5434bc2275fc9bab85f82640a19130"
+  },
+  "state-spaces/mamba-130m-hf": {
+    "error": null,
+    "sha": "1e76775f628fbf1350fbe4dbb3d971ba64af25a1"
+  },
+  "timm/efficientnet_b0.ra_in1k": {
+    "error": null,
+    "sha": "1b5383e5f79cc0f7fc067e372f8f26a5fa73f26a"
+  },
+  "timm/mobilenetv3_large_100.ra_in1k": {
+    "error": null,
+    "sha": "96f46a1c52932f27492dff66c72378eb99b443a7"
+  },
+  "timm/resnet18.a1_in1k": {
+    "error": null,
+    "sha": "491b427b45c94c7fb0e78b5474cc919aff584bbf"
+  },
+  "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit": {
+    "error": null,
+    "sha": "216d96b52c97a3c8294776df8477592f6828981c"
+  },
+  "unsloth/tinyllama-bnb-4bit": {
+    "error": null,
+    "sha": "c6cc31241054c2fe9b4c804f398faffe1254728f"
+  }
+}

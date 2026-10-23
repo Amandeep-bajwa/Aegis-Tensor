@@ -67,3 +67,10 @@ htmlcov/
 *.h5
 *.ckpt
 !tests/fixtures/*.safetensors
+
+# Calibration download cache
+benchmarks/.hf-cache/
+benchmarks/.hf-cache-calibration/
+benchmarks/.venv-tf/
+benchmarks/*.log
+benchmarks/results/backdoor_models/
