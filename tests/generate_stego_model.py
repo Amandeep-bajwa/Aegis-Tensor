@@ -1,4 +1,15 @@
-"""Generate deterministic clean and synthetic steganography test models."""
+"""Generate deterministic clean and synthetic steganography test models.
+
+The clean weights are normally distributed, the way trained weights look. The
+injected tensors are:
+
+* ``layer_1.weight``: the whole tensor overwritten with random bytes (naive blob).
+* ``layer_2.weight``: a readable text payload in the least significant mantissa
+  bit of every weight (structured LSB payload).
+* ``layer_3.weight``: a random payload in the least significant mantissa bit of
+  every weight. Random low bits are indistinguishable from trained weights, so
+  this case is expected to pass the static scan. ``aegis disarm`` removes it.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +21,7 @@ from safetensors.numpy import save_file
 
 
 MODEL_SIZE = 256
-LSB_PAYLOAD = b"Aegis-Tensor synthetic steganography payload"
+TEXT_PAYLOAD = b"Aegis-Tensor synthetic steganography payload: connect 10.0.0.5:4444 " * 4000
 
 
 def _clean_weights(rng: np.random.Generator) -> dict[str, np.ndarray]:
@@ -23,26 +34,27 @@ def _clean_weights(rng: np.random.Generator) -> dict[str, np.ndarray]:
 
 
 def _naive_injection(rng: np.random.Generator) -> np.ndarray:
-    """Represent encrypted payload bytes as float32 words."""
-    payload = rng.integers(
-        0, 256, size=MODEL_SIZE * MODEL_SIZE * 4, dtype=np.uint8
-    )
+    """Replace every float with random bytes (encrypted-blob style)."""
+    payload = rng.integers(0, 256, size=MODEL_SIZE * MODEL_SIZE * 4, dtype=np.uint8)
     return payload.view(np.float32).reshape(MODEL_SIZE, MODEL_SIZE)
 
 
-def _lsb_injection() -> np.ndarray:
-    """Embed payload bits in the mantissa LSB of 100,000 float32 values."""
-    elements = 100_000
-    digits = np.arange(elements, dtype=np.uint32) % 9 + 1
-    values = digits.astype(np.float32) + np.float32(0.25)
-    words = values.view(np.uint32)
+def _set_lsb(weights: np.ndarray, bits: np.ndarray) -> np.ndarray:
+    words = weights.reshape(-1).view(np.uint32).copy()
+    words = (words & ~np.uint32(1)) | bits.astype(np.uint32)
+    return words.view(np.float32).reshape(weights.shape)
 
-    payload_bits = np.unpackbits(
-        np.frombuffer(LSB_PAYLOAD, dtype=np.uint8), bitorder="little"
-    )
-    repeated_bits = np.resize(payload_bits, elements).astype(np.uint32)
-    words ^= repeated_bits
-    return words.view(np.float32)
+
+def _text_lsb_injection(weights: np.ndarray) -> np.ndarray:
+    """Write a readable text payload into the least significant mantissa bit."""
+    count = weights.size
+    payload_bits = np.unpackbits(np.frombuffer(TEXT_PAYLOAD, dtype=np.uint8), bitorder="little")
+    return _set_lsb(weights, np.resize(payload_bits, count))
+
+
+def _random_lsb_injection(weights: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Write random bits into the least significant mantissa bit."""
+    return _set_lsb(weights, rng.integers(0, 2, size=weights.size, dtype=np.uint32))
 
 
 def generate_models(output_dir: Path, seed: int = 20260922) -> tuple[Path, Path]:
@@ -52,7 +64,8 @@ def generate_models(output_dir: Path, seed: int = 20260922) -> tuple[Path, Path]
     clean = _clean_weights(rng)
     infected = dict(clean)
     infected["layer_1.weight"] = _naive_injection(rng)
-    infected["layer_2.weight"] = _lsb_injection()
+    infected["layer_2.weight"] = _text_lsb_injection(clean["layer_2.weight"])
+    infected["layer_3.weight"] = _random_lsb_injection(clean["layer_3.weight"], rng)
 
     clean_path = output_dir / "clean_model.safetensors"
     infected_path = output_dir / "infected_model.safetensors"
