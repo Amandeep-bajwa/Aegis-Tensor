@@ -5,7 +5,7 @@ activations under fuzzing to detect Sleeper Agent Trojan triggers via L_infinity
 """
 
 import math
-from dataclasses import dataclass, fields, field, is_dataclass
+from dataclasses import asdict, dataclass, fields, field, is_dataclass
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 import numpy as np
@@ -76,6 +76,24 @@ class TrojanScanReport:
     baseline_stats: Dict[str, LayerBaselineStat] = field(default_factory=dict)
     # Peak ratio of fuzzed L_inf to the magnitude-matched clean L_inf, per layer.
     layer_spike_ratios: Dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Plain-JSON form, used to return a report from the sandboxed fuzz process."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TrojanScanReport":
+        data = dict(data)
+        data["iteration_reports"] = [
+            FuzzIterationReport(**{
+                **it,
+                "layer_stats": {k: LayerActivationStat(**v) for k, v in it["layer_stats"].items()},
+            })
+            for it in data.get("iteration_reports", [])
+        ]
+        data["layer_anomalies"] = [LayerAnomaly(**a) for a in data.get("layer_anomalies", [])]
+        data["baseline_stats"] = {k: LayerBaselineStat(**v) for k, v in data.get("baseline_stats", {}).items()}
+        return cls(**data)
 
 
 # ---------------------------------------------------------------------------
