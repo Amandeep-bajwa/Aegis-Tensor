@@ -111,23 +111,59 @@ aegis scan /path/to/model.safetensors \
 
 **Known limit:** random bits hidden in the least significant mantissa look like trained weights, so no static statistic can separate them. Remove them with `aegis disarm` (below).
 
-### Pickle Checkpoints (`.pt`, `.pth`, `.bin`, `.pkl`)
-`aegis scan` routes these files to an opcode scanner. It reads the pickle without executing it and flags any global outside the tensor-checkpoint allowlist, such as `os.system` or `builtins.eval`. Malformed pickles are reported, not skipped.
+### Pickle and Other Containers
+`aegis scan` picks the scanner from each file's leading bytes, never its extension. Every non-safetensors file goes to the container scanner, which handles:
+- raw pickles (protocols 0–5);
+- PyTorch zip and legacy tar checkpoints;
+- numpy `.npy`/`.npz` files;
+- 7z archives.
+
+The scanner never executes anything. It simulates the pickle stack and memo, so an `os.system` assembled from memoized strings is still resolved. It keeps scanning past malformed bytes, and it reads zip entries from their local headers, so tampered flags or CRCs cannot stop it. Unknown formats are reported as findings.
 ```bash
 aegis scan /path/to/checkpoint.pt
 ```
 
-### Disarming Low-Order Bits
-Rounds away the lowest mantissa bits of every float tensor. This destroys hidden payloads without detecting them, and each weight changes by at most a few units in its last kept place. It does not remove overwritten tensors, which a scan will still flag.
+**GGUF, Keras and ONNX** are scanned without loading them in their frameworks:
+- **GGUF** chat templates are checked for Jinja template injection (CVE-2024-34359).
+- **Keras** configs are checked for `Lambda` layers and custom objects.
+- **ONNX** graphs are checked for external-data paths that leave the model directory, and for custom operators.
+
+Unquantized tensors in all three formats go through the same statistical rules as safetensors.
+
+### Output Formats and Exit Codes
 ```bash
-aegis disarm /path/to/model.safetensors /path/to/model.disarmed.safetensors --low-bits 8
+aegis scan model-a.safetensors model-b.pt --format json    # findings document, schema docs/schema/findings-v1.schema.json
+aegis scan model-a.safetensors --format sarif > aegis.sarif  # SARIF 2.1.0 for GitHub code scanning
+```
+Each finding includes:
+- a stable ID and a rule ID;
+- severity and confidence;
+- its location (tensor, archive entry and byte offset, header key, or layer);
+- the evidence and the treatment command;
+- MITRE ATLAS techniques (pinned release, `aegis/atlas.py`) and OWASP ML/LLM Top 10 references.
+
+Exit codes are 0 for no finding at or above `--fail-on` (default `medium`), 1 for findings, and 2 when a file could not be scanned. A ready-to-copy pull-request workflow is in [`examples/github-actions/aegis-model-scan.yml`](examples/github-actions/aegis-model-scan.yml).
+
+### Disarming Low-Order Bits
+This rounds away the lowest mantissa bits of every float tensor. It destroys hidden payloads without detecting them.
+
+`--low-bits` is clamped per dtype to a safe maximum: float32 16, float16 4, bfloat16 2. `--allow-unsafe` goes further, but a width that would reach the exponent is always refused. Measured accuracy and perplexity costs are in [`docs/disarm_impact.md`](docs/disarm_impact.md).
+
+Disarming does not remove overwritten tensors, which a scan will still flag.
+```bash
+aegis disarm /path/to/model.safetensors /path/to/model.disarmed.safetensors --low-bits 8 [--strip-metadata]
 ```
 
 ### Dynamic Trojan Fuzzing (CLI)
+Load the weights from safetensors into an architecture you trust, so no code from the model file runs:
 ```bash
-aegis fuzz /path/to/eager_model.pt --input-shape 1,10 --iterations 50
+aegis fuzz model.safetensors --hf-config bert-base-uncased                                  # architecture from a HF config
+aegis fuzz model.safetensors --arch mypkg.models:Net --input-shape 1,3,32,32                  # your own class
+aegis fuzz untrusted.pt --trust-pickle --input-shape 1,10                                   # pickled module, sandboxed
 ```
-Fuzzing needs an eager `nn.Module`. Pass `--trust-pickle` only for a file you trust, because loading a pickled module runs its code. TorchScript models cannot be fuzzed, since PyTorch disallows forward hooks on them. Runs are reproducible with `--seed`.
+`--trust-pickle` unpickles the module in an isolated process. On macOS it has no network, no writes outside a throwaway directory, and no process spawning. On Linux it has no network. If no sandbox is available, it refuses to run.
+
+TorchScript is refused, because PyTorch disallows forward hooks on it. Runs are reproducible with `--seed`. See [`docs/FUZZ_SAFETY.md`](docs/FUZZ_SAFETY.md) for the residual risk.
 
 ### Dynamic Trojan Fuzzing (Python API)
 ```python

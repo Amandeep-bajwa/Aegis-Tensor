@@ -46,9 +46,14 @@ probed and confirmed.
 |---|---|---|---|---|---|---|
 | T10 | Code execution via imported `os`/`posix` callable | Pickle RCE; nullifAI (Hugging Face, Feb 2025) | Opcode scan against allowlist | Global name | `refuse` | tested |
 | T11 | `builtins.eval` / `exec` / `__import__` | Pickle RCE | Opcode scan | Global name | `refuse` | tested |
-| T12 | Malformed pickle (evades loaders that stop at first error) | nullifAI broken-pickle evasion | Stream parse error reported | Byte offset not yet given | `refuse` | tested |
+| T12 | Malformed pickle, payload before or after the broken region | nullifAI broken-pickle evasion | Scan resyncs past malformed bytes and reports every global | Entry and byte offset | `refuse` | tested |
 | T13 | Loading an unsafe pickle through `aegis fuzz` | Loader-side RCE | `weights_only=True` by default; payload never runs | — | `refuse` | tested |
-| — | Obfuscated import via memo or get opcodes | Pickle evasion | Only direct and `STACK_GLOBAL` with literal strings | — | — | limit |
+| T20 | Callable assembled from memoized strings (MEMOIZE/PUT then GET then STACK_GLOBAL) | Scanner evasion | Static stack and memo simulation | Byte offset | `refuse` | tested |
+| T21 | Pickle renamed to another extension | Scanner evasion | Routing by magic bytes, not extension | File | `refuse` | tested |
+| T22 | Checkpoint repackaged as 7z | nullifAI | 7z flagged; contents scanned with py7zr | Archive entry and offset | `refuse` | tested |
+| T23 | Zip entry with encryption flag set, bad CRC, or damaged central directory | Breaks Python zip readers while PyTorch still loads | Entries read from local headers; tampering reported | Archive entry | `refuse` | tested |
+| T24 | Object-dtype numpy array (`.npy`/`.npz`) carrying a pickle | Pickle smuggling | Header parsed; object payload scanned | Array and offset | `refuse` | tested |
+| T25 | Unrecognised container format | Scanner evasion | Unknown format is a finding; leading bytes still opcode-scanned | File | inspect | tested |
 
 ## D. Behavioural backdoors (sleeper and trigger)
 
@@ -62,7 +67,27 @@ Treatment for T15 is detection and localisation only. This tool does not yet pru
 retrain a trojaned layer. Triggers that do not act on activation magnitude, such as
 semantic or token-level triggers, are not covered by the fuzzer's trigger families.
 
-## E. Out of scope for a weights-and-container scanner
+## E. Other model formats (GGUF, Keras, ONNX)
+
+Tensor statistics for these formats come from the same Rust rules as safetensors (`scan_tensor_bytes`).
+
+| ID | Threat | Precedent | Detected by | Pinpoints | Treatment | Status |
+|---|---|---|---|---|---|---|
+| T26 | Jinja template injection in a GGUF chat template | CVE-2024-34359 (llama-cpp-python) | Dunder access, `attr` filter, module or eval calls in `tokenizer.chat_template*` | Metadata key | `refuse` | tested |
+| T27 | Overwritten float tensor in a GGUF file | Weight steganography | Tensor rules on F32/F16/BF16/F64 tensors | Tensor name | `quarantine` | tested |
+| T28 | Malformed or truncated GGUF | Parser confusion | Bounds-checked parse; reported as a finding | File | inspect | tested |
+| T29 | Keras `Lambda` layer carrying Python bytecode | Keras code execution on load without safe_mode | Config JSON walk | Layer name | `refuse` | tested |
+| T30 | Keras custom object from a third-party module | Code execution through imports | `module` / `registered_name` outside Keras | Layer name | inspect | tested |
+| T31 | ONNX external data path leaving the model directory | Arbitrary file read by the loader | Absolute, `..` or `~` locations | Initializer | `refuse` | tested |
+| T32 | ONNX custom operator domain | Native code via a custom-op library | Node domain outside the standard ONNX domains | Node | inspect | tested |
+| T33 | Overwritten tensor in ONNX initializers or Keras/HDF5 weights | Weight steganography | Tensor rules | Tensor name | `quarantine` | tested |
+
+Limits:
+- Quantized GGUF tensors (Q4/Q5/Q8/K-quants) are packed blocks, so the float rules do not apply to them and they are skipped.
+- ONNX files are recognised by the `.onnx` extension plus their protobuf header, because ONNX has no magic number.
+- Template checks are pattern-based. A template that renders safely in a sandboxed environment can still be flagged when it uses dunder names.
+
+## F. Out of scope for a weights-and-container scanner
 
 | Threat | Why out of scope | Where to address it |
 |---|---|---|
@@ -74,9 +99,14 @@ semantic or token-level triggers, are not covered by the fuzzer's trigger famili
 
 ## Known gaps, in priority order
 
-1. **Calibration on real checkpoints.** All thresholds are validated on synthetic and small trained models. Real Hugging Face checkpoints are needed to measure false-positive rates.
+1. **Calibration findings** (docs/calibration.md: 54 public models, 18,113 tensors).
+   - At default thresholds, 4 of 54 models (7.4%) raise false positives.
+   - Three of them are float16 bias vectors tripping the exponent-lane rule; proposal P1 is a float16 threshold of 7.2.
+   - The fourth is one DETR weight with structured low bits.
+   - Payloads inside **packed quantized tensors** (GPTQ/AWQ int32, bitsandbytes 4-bit uint8, FP8) are only covered by the pooled-entropy rule, with little margin. A format-aware unpacking rule is needed (proposal P3).
+   - Models over 3 GB were not calibrated.
 2. **Sub-256-element tensors** (T19) are not covered. A split-payload attacker can use this.
-3. **Obfuscated pickle imports** (memo and get opcodes) are not resolved.
+3. **Pickle imports built at runtime** (for example a callable produced by another REDUCE and then called) cannot be resolved statically. They surface as unresolved STACK_GLOBAL or as the importing global, not as the final callable. Legacy tar `storages`/`tensors` members are scanned only up to their first pickle.
 4. **Trojan treatment.** Detection exists for T15, but there's no fine-prune or retrain step.
 5. **Random low-bit payloads** (T02) are not detectable statically. Only the removal treatment works.
 
