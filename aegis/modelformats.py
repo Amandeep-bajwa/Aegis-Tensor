@@ -95,6 +95,16 @@ def _check_template(text: str, result: ModelFormatResult, where: str) -> None:
             result.add("SUSPICIOUS", f"chat template: {message}", where, code="gguf_template_unverifiable")
 
 
+def _check_secrets(metadata: Dict[str, Any], result: ModelFormatResult, label: str) -> None:
+    from aegis.secrets import find_secrets
+
+    for key, value in metadata.items():
+        if isinstance(value, str):
+            for kind, masked in find_secrets(value):
+                result.add("SUSPICIOUS", f"{kind} in metadata ({masked}) - leaked credential; tell the owner "
+                           "privately and have it revoked", f"{label}:{key}", code="secret")
+
+
 # --- GGUF -------------------------------------------------------------------------
 
 class _Reader:
@@ -134,31 +144,43 @@ class _Reader:
         raise ValueError(f"unknown GGUF value type {kind}")
 
 
+def parse_gguf_header(data) -> Tuple[Dict[str, Any], List[Tuple[str, List[int], int, int]], int]:
+    """(metadata, tensor infos, end of header). ``data`` may be a prefix of the file;
+    ValueError("truncated ...") means more bytes are needed. Fixed-size arrays are skipped."""
+    reader = _Reader(data)
+    if reader.take("<I") != struct.unpack("<I", GGUF_MAGIC)[0]:
+        raise ValueError("not a GGUF file")
+    version, n_tensors, n_kv = reader.take("<I"), reader.take("<Q"), reader.take("<Q")
+    metadata = {}
+    for _ in range(n_kv):
+        key = reader.string()
+        metadata[key] = reader.value(reader.take("<I"))
+    infos = []
+    for _ in range(n_tensors):
+        name = reader.string()
+        dims = [reader.take("<Q") for _ in range(reader.take("<I"))]
+        infos.append((name, dims, reader.take("<I"), reader.take("<Q")))
+    return metadata, infos, reader.pos
+
+
+def chat_templates(metadata: Dict[str, Any]) -> Dict[str, str]:
+    return {k: v for k, v in metadata.items() if k.startswith("tokenizer.chat_template") and isinstance(v, str)}
+
+
 def _scan_gguf(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]) -> None:
     import mmap
 
     with open(path, "rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
-        reader = _Reader(data)
         try:
-            reader.take("<I")  # magic, already checked
-            version, n_tensors, n_kv = reader.take("<I"), reader.take("<Q"), reader.take("<Q")
-            metadata = {}
-            for _ in range(n_kv):
-                key = reader.string()
-                metadata[key] = reader.value(reader.take("<I"))
-            infos = []
-            for _ in range(n_tensors):
-                name = reader.string()
-                dims = [reader.take("<Q") for _ in range(reader.take("<I"))]
-                infos.append((name, dims, reader.take("<I"), reader.take("<Q")))
+            metadata, infos, header_end = parse_gguf_header(data)
         except (ValueError, struct.error) as error:
             result.add("SUSPICIOUS", f"malformed GGUF ({error})", path.name, code="gguf_malformed")
             return
-        for key, value in metadata.items():
-            if key.startswith("tokenizer.chat_template") and isinstance(value, str):
-                _check_template(value, result, f"{path.name}:{key}")
+        for key, value in chat_templates(metadata).items():
+            _check_template(value, result, f"{path.name}:{key}")
+        _check_secrets(metadata, result, path.name)
         alignment = metadata.get("general.alignment") or 32
-        data_start = -(-reader.pos // alignment) * alignment
+        data_start = -(-header_end // alignment) * alignment
         for name, dims, ggml_type, offset in infos:
             if ggml_type not in _GGML_FLOAT_TYPES:
                 continue  # quantized blocks: statistics for floats do not apply

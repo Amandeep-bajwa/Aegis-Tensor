@@ -45,6 +45,8 @@ from aegis import (
 )
 from aegis.findings import from_fuzz
 from aegis.severity import EXIT_ERROR, exit_code_for, tensor_severity
+from aegis.thresholds import DEFAULT_THRESHOLDS
+from aegis.disarm import DEFAULT_LOW_BITS, default_disarm_path
 
 
 class FailOn(str, Enum):
@@ -130,7 +132,7 @@ def _treatment_lines(results, header_result, model_path: Path) -> List[str]:
     ]
     header_sanitize = [f for f in header_result.findings if f.treatment == "sanitize"]
     header_quarantine = [f for f in header_result.findings if f.treatment == "quarantine"]
-    disarm_cmd = f"aegis disarm {model_path} {model_path.with_suffix('.disarmed.safetensors')} --low-bits 8"
+    disarm_cmd = f"aegis disarm {model_path} {default_disarm_path(model_path)}"
 
     if structured or header_sanitize:
         flags = " --strip-metadata" if header_sanitize else ""
@@ -178,7 +180,24 @@ def _tensor_record(res) -> dict:
     }
 
 
-def _scan_file(path: Path, thresholds: dict) -> dict:
+def _scan_file(path: Path, thresholds: dict, engines: Optional[List[str]] = None) -> dict:
+    """Scan one file and attach its verdict. See _scan_file_core for routing."""
+    from aegis.engines import run_engines
+    from aegis.findings import from_engines
+    from aegis.verdict import file_verdict
+
+    outcome = _scan_file_core(path, thresholds, keep_streams=bool(engines))
+    if engines:
+        container = outcome.get("container")
+        streams = (getattr(container, "streams", None) or []) if container is not None else []
+        detected = outcome["format"]
+        outcome["engines"] = run_engines(engines, path, detected, streams)
+        outcome["findings"] = outcome["findings"] + from_engines(str(path), outcome["engines"], outcome["findings"])
+    outcome["verdict"] = file_verdict(str(path), outcome["format"], outcome["findings"])
+    return outcome
+
+
+def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) -> dict:
     """Scan one file without rendering anything. Raises ScanError when it cannot run.
 
     Routing is by magic bytes, never by extension: a pickle renamed to .safetensors still
@@ -205,7 +224,7 @@ def _scan_file(path: Path, thresholds: dict) -> dict:
                 "tensors": [_tensor_record(r) for r in result.tensor_results]}
     if file_format != "safetensors":
         try:
-            container = scan_pickle_file(path)
+            container = scan_pickle_file(path, keep_streams=keep_streams)
         except (OSError, zipfile.BadZipFile) as e:
             raise ScanError(str(e))
         return {"path": str(path), "format": container.format, "kind": "container", "container": container,
@@ -222,6 +241,33 @@ def _scan_file(path: Path, thresholds: dict) -> dict:
     return {"path": str(path), "format": "safetensors", "kind": "safetensors", "tensor_results": tensors,
             "header": header, "findings": from_safetensors(str(path), tensors, header),
             "tensors": [_tensor_record(r) for r in tensors]}
+
+
+_VERDICT_STYLE = {"critical": ("red", "🚨"), "suspicious": ("yellow", "⚠️"), "no_known_findings": ("green", "✅")}
+
+
+def _render_verdict(outcome: dict) -> None:
+    verdict = outcome["verdict"]
+    color, icon = _VERDICT_STYLE[verdict["level"]]
+    body = f"[bold {color}]{verdict['label']}[/bold {color}]  [dim]({verdict['reason']})[/dim]\n\n{verdict['next_step']}"
+    if verdict.get("command"):
+        body += f"\n\n[bold]Next:[/bold] [cyan]{verdict['command']}[/cyan]"
+    if verdict["disclosure"] == "platform":
+        body += "\n[dim]If confirmed: report to the platform first, never to the uploader (SECURITY.md).[/dim]"
+    elif verdict["disclosure"] == "owner":
+        body += "\n[dim]If confirmed: tell the owner privately and suggest a fix (SECURITY.md).[/dim]"
+    console.print(Panel(body, title=f"{icon} Verdict: {Path(outcome['path']).name}", border_style=color))
+
+
+def _render_engines(outcome: dict) -> None:
+    for result in outcome.get("engines", []):
+        if result.error:
+            state = f"[yellow]error[/yellow]: {result.error}"
+        elif not result.ran:
+            state = "[dim]not applicable to this format[/dim]"
+        else:
+            state = f"[red]{result.worst}[/red] ({len(result.issues)} issue(s))" if result.issues else "[green]no issues[/green]"
+        console.print(f"[dim]Engine[/dim] [bold]{result.engine}[/bold] {result.version or ''}: {state}")
 
 
 def _render_container_text(outcome: dict) -> None:
@@ -384,18 +430,18 @@ def scan_command(
         ..., help="Model files to scan. Each file's format is read from its bytes, not its extension.",
     ),
     entropy_threshold: float = typer.Option(
-        7.92,
+        DEFAULT_THRESHOLDS["entropy"],
         "--entropy-threshold",
         "-e",
         help="Shannon entropy threshold for flagging encrypted/compressed payloads (max 8.0).",
     ),
     exponent_threshold: float = typer.Option(
-        6.5,
+        DEFAULT_THRESHOLDS["exponent"],
         "--exponent-threshold",
         help="Sign/exponent byte-lane entropy (bits) above which float values count as overwritten. Clean weights measure about 2.7.",
     ),
     plane_floor: float = typer.Option(
-        7.5,
+        DEFAULT_THRESHOLDS["plane"],
         "--plane-floor",
         help="Low mantissa bit-plane entropy (bits) below which the least significant bits count as structured. Clean weights measure about 8.",
     ),
@@ -425,6 +471,13 @@ def scan_command(
         "-o",
         help="Also write the JSON findings document to this file.",
     ),
+    engines: str = typer.Option(
+        "auto",
+        "--engines",
+        envvar="AEGIS_ENGINES",
+        help="Optional engines folded into the verdict: auto (every installed one: fickling, modelscan), "
+             "none, or a comma-separated list.",
+    ),
 ):
     """Static security scan of model files.
 
@@ -439,18 +492,28 @@ def scan_command(
         print_banner()
     thresholds = {"entropy": entropy_threshold, "exponent": exponent_threshold,
                   "plane": plane_floor, "benford": benford_threshold}
+    from aegis.engines import select
+    from aegis.verdict import file_verdict
+
+    try:
+        engine_names = select(engines)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR)
 
     files, errored = [], False
     for index, path in enumerate(model_paths):
         if text and index:
             console.rule()
         try:
-            outcome = _scan_file(path, thresholds)
+            outcome = _scan_file(path, thresholds, engine_names)
         except ScanError as e:
             errored = True
-            files.append({"path": str(path), "format": None, "findings": [], "error": str(e)})
+            files.append({"path": str(path), "format": None, "findings": [], "error": str(e),
+                          "verdict": file_verdict(str(path), None, [], error=str(e))})
             if text:
                 console.print(f"[bold red]Scan failed:[/bold red] {e}")
+                _render_verdict(files[-1])
             continue
         files.append(outcome)
         if text:
@@ -460,6 +523,8 @@ def scan_command(
                 _render_findings_text(outcome)
             else:
                 _render_safetensors_text(outcome, thresholds)
+            _render_engines(outcome)
+            _render_verdict(outcome)
 
     document = to_json_document(files, fail_on.value, __version__)
     if output_format == OutputFormat.json:
@@ -902,10 +967,12 @@ def fuzz_command(
 
 @app.command(name="disarm")
 def disarm_command(
-    model_path: Path = typer.Argument(..., help="Path to the .safetensors model to disarm."),
-    output_path: Path = typer.Argument(..., help="Where to write the disarmed copy. Must differ from the input."),
+    model_path: Path = typer.Argument(..., help="Path to the .safetensors or .gguf model to disarm."),
+    output_path: Optional[Path] = typer.Argument(
+        None, help="Where to write the disarmed copy. Defaults to <name>.disarmed<ext> next to the input.",
+    ),
     low_bits: int = typer.Option(
-        8,
+        DEFAULT_LOW_BITS,
         "--low-bits",
         "-k",
         help="Low mantissa bits to round away. Clamped per dtype to a safe maximum "
@@ -924,26 +991,18 @@ def disarm_command(
 ):
     """Round away low-order mantissa bits so hidden payloads are destroyed without detecting them.
 
-    Each weight changes by at most a few units in its last kept place. Use this
-    when a scan is inconclusive, or before deploying a model from an untrusted source.
+    Each weight changes by at most a few units in its last kept place. The attacker is
+    assumed to know the scan thresholds, so this is recommended for every model from an
+    untrusted source, including models with no findings. Supports safetensors and GGUF.
     """
     print_banner()
 
     if not model_path.exists():
         console.print(f"[bold red]Error:[/bold red] Model file not found at: {model_path}")
         raise typer.Exit(code=1)
+    output_path = output_path or default_disarm_path(model_path)
     if model_path.resolve() == output_path.resolve():
         console.print("[bold red]Error:[/bold red] Output must be a different file from the input.")
-        raise typer.Exit(code=1)
-    if not TORCH_AVAILABLE:
-        console.print(
-            Panel(
-                "[bold red]PyTorch is required for disarming.[/bold red]\n\n"
-                "Install with: [bold green]pip install -e .[fuzzer][/bold green]",
-                title="⚠️ PyTorch Engine Missing",
-                border_style="yellow",
-            )
-        )
         raise typer.Exit(code=1)
 
     from aegis.disarm import disarm_file
@@ -964,7 +1023,9 @@ def disarm_command(
     console.print(
         Panel(
             f"[bold]Disarmed {report.tensors_disarmed} floating-point tensor(s)[/bold] "
-            f"({report.tensors_skipped} non-float tensor(s) copied unchanged).\n\n"
+            f"({report.tensors_skipped} other tensor(s) copied unchanged"
+            + (f", of which {sum(report.untreated.values())} are quantized and [bold]not treated[/bold]"
+               if report.untreated else "") + ").\n\n"
             f"Low bits requested: [cyan]{report.low_bits}[/cyan] · applied per dtype: [cyan]{applied}[/cyan]\n"
             f"Largest per-weight relative change: [cyan]{report.max_relative_change:.3e}[/cyan]\n\n"
             f"Written to: [cyan]{output_path.resolve()}[/cyan]\n"
@@ -974,6 +1035,59 @@ def disarm_command(
             border_style="green",
         )
     )
+
+
+@app.command(name="report-bundle")
+def report_bundle_command(
+    model_paths: List[Path] = typer.Argument(..., help="Model files to include."),
+    output_dir: Optional[Path] = typer.Option(
+        None, "--output-dir", "-o", help="Folder to create. Defaults to ./aegis-report-<name>-<timestamp>.",
+    ),
+    repo_url: Optional[str] = typer.Option(
+        None, "--repo-url", help="Where the file was downloaded from. Read from a Hugging Face cache path when omitted.",
+    ),
+    revision: Optional[str] = typer.Option(
+        None, "--revision", help="Commit hash of the download. Read from a Hugging Face cache path when omitted.",
+    ),
+    engines: str = typer.Option("auto", "--engines", envvar="AEGIS_ENGINES",
+                                help="Optional engines, as for `aegis scan`."),
+):
+    """Package findings, file hashes, the repo URL and the revision for coordinated disclosure.
+
+    Writes a folder to review and submit yourself; nothing is sent. The model file is not
+    copied. SECURITY.md explains where a report should go.
+    """
+    from aegis.bundle import default_bundle_dir, write_bundle
+    from aegis.engines import select
+    from aegis.findings import to_json_document
+
+    print_banner()
+    try:
+        engine_names = select(engines)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR)
+    thresholds = dict(DEFAULT_THRESHOLDS)
+    outcomes = []
+    for path in model_paths:
+        try:
+            outcomes.append(_scan_file(path, thresholds, engine_names))
+        except ScanError as e:
+            console.print(f"[bold red]Scan failed:[/bold red] {path}: {e}")
+            raise typer.Exit(code=EXIT_ERROR)
+    output_dir = output_dir or default_bundle_dir(model_paths)
+    if output_dir.exists():
+        console.print(f"[bold red]Error:[/bold red] {output_dir} already exists; choose another --output-dir.")
+        raise typer.Exit(code=EXIT_ERROR)
+    write_bundle(output_dir, outcomes, to_json_document(outcomes, "medium", __version__), repo_url, revision,
+                 __version__)
+    for outcome in outcomes:
+        _render_verdict(outcome)
+    console.print(Panel(
+        f"Bundle written to [cyan]{output_dir.resolve()}[/cyan]\n\n"
+        "REPORT.md is a draft: review it before sending. [bold]Nothing has been sent.[/bold]\n"
+        "Where it should go is at the top of REPORT.md (SECURITY.md has the full process).",
+        title="📦 Report Bundle", border_style="cyan"))
 
 
 @app.command(name="doctor")

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from aegis.atlas import ATLAS_RELEASE, ATLAS_TECHNIQUES
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 SCHEMA_ID = "https://github.com/KrishG7/Aegis-Tensor/blob/main/docs/schema/findings-v1.schema.json"
 
 OWASP = {
@@ -56,6 +56,9 @@ RULES: Dict[str, Dict[str, Any]] = {
                    "treatment": "strip", **_STEGO},
     "AEGIS-H003": {"code": "tensor_name", "name": "oversized-tensor-name", "severity": "medium", "confidence": 0.6,
                    "title": "Oversized tensor name: possible hidden payload", "treatment": "quarantine", **_STEGO},
+    "AEGIS-H004": {"code": "secret", "name": "credential-in-metadata", "severity": "medium", "confidence": 0.8,
+                   "title": "Credential (API key, token or private key) left in model metadata",
+                   "treatment": "strip", "atlas": ["AML.T0010.003"], "owasp": ["ML06", "LLM03"]},
     "AEGIS-P001": {"code": "dangerous_import", "name": "pickle-code-execution", "severity": "critical",
                    "confidence": 0.95, "title": "Pickle imports a code-execution primitive", "treatment": "refuse",
                    **_CONTAINER},
@@ -108,6 +111,14 @@ RULES: Dict[str, Dict[str, Any]] = {
     "AEGIS-F001": {"code": "format_unavailable", "name": "format-not-inspected", "severity": "medium",
                    "confidence": 0.3, "title": "Format recognised but not inspected (optional library missing)",
                    "treatment": "inspect", **_CONTAINER},
+    "AEGIS-E001": {"code": "engine_finding", "name": "engine-finding", "severity": "medium", "confidence": 0.7,
+                   "title": "Optional engine (Fickling or ModelScan) reported an issue", "treatment": "inspect",
+                   **_CONTAINER},
+    "AEGIS-E002": {"code": "engine_disagreement", "name": "engine-disagreement", "severity": "medium",
+                   "confidence": 0.5, "title": "Aegis and an optional engine disagree about this file",
+                   "treatment": "inspect", **_CONTAINER},
+    "AEGIS-E003": {"code": "engine_error", "name": "engine-error", "severity": "low", "confidence": 0.3,
+                   "title": "Optional engine could not check this file", "treatment": "inspect", **_CONTAINER},
     "AEGIS-B001": {"code": "activation_spike", "name": "backdoor-activation-spike", "severity": "high",
                    "confidence": 0.6, "title": "Layer activation spikes under fuzzing (possible backdoor)",
                    "treatment": "inspect", **_BACKDOOR},
@@ -153,8 +164,9 @@ def _make(rule: str, message: str, location: Dict[str, Any], evidence: Dict[str,
 
 
 def _disarm_command(path: str, strip: bool = False) -> str:
-    target = str(Path(path).with_suffix(".disarmed.safetensors"))
-    return f"aegis disarm {path} {target} --low-bits 8" + (" --strip-metadata" if strip else "")
+    from aegis.disarm import default_disarm_path
+
+    return f"aegis disarm {path} {default_disarm_path(path)}" + (" --strip-metadata" if strip else "")
 
 
 # --- Builders ------------------------------------------------------------------------
@@ -219,6 +231,41 @@ def from_fuzz(path: str, report) -> List[Finding]:
     ]
 
 
+def from_engines(path: str, results, aegis_findings: List[Finding]) -> List[Finding]:
+    """Engine issues as findings (E001), plus a finding wherever an engine and Aegis disagree (E002)."""
+    findings = []
+    aegis_worst = max_severity(aegis_findings)
+    for result in results:
+        for issue in result.issues:
+            entry, offset = _split_location(issue.location) if issue.location else (None, None)
+            findings.append(_make("AEGIS-E001", issue.message, {"file": path, "entry": entry or issue.location or None,
+                                                               "offset": offset},
+                                  evidence={"engine": result.engine, "engine_version": result.version},
+                                  severity=issue.severity))
+        if result.error:
+            findings.append(_make("AEGIS-E003", f"{result.engine}: {result.error}", {"file": path},
+                                  evidence={"engine": result.engine, "engine_version": result.version}))
+        if not result.ran:
+            continue
+        engine_worst = result.worst
+        rank = lambda level: -1 if level is None else SEVERITY_RANK[level]
+        if rank(engine_worst) >= SEVERITY_RANK["high"] and rank(aegis_worst) < SEVERITY_RANK["high"]:
+            findings.append(_make(
+                "AEGIS-E002", f"{result.engine} rates this file {engine_worst}; Aegis's own checks rate it "
+                f"{aegis_worst or 'clean'}. Treat it as {engine_worst} until the difference is understood.",
+                {"file": path}, evidence={"engine": result.engine,
+                                          "engine_worst": engine_worst, "aegis_worst": aegis_worst},
+                severity="medium"))
+        elif rank(aegis_worst) >= SEVERITY_RANK["high"] and rank(engine_worst) < SEVERITY_RANK["medium"]:
+            findings.append(_make(
+                "AEGIS-E002", f"Aegis rates this file {aegis_worst}; {result.engine} found nothing. "
+                f"{result.engine} may not cover this threat (see docs/THREAT_MATRIX.md).",
+                {"file": path}, evidence={"engine": result.engine, "engine_worst": engine_worst,
+                                          "aegis_worst": aegis_worst},
+                severity="low"))
+    return findings
+
+
 def _split_location(location: str):
     """'archive.pt:archive/data.pkl@35' -> ('archive/data.pkl', 35)."""
     entry, offset = location, None
@@ -256,11 +303,15 @@ def to_json_document(files: List[Dict[str, Any]], fail_on: str, tool_version: st
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "fail_on": fail_on,
         "max_severity": max_severity(all_findings),
+        **({"verdict": _overall([e["verdict"] for e in files])} if all(e.get("verdict") for e in files) else {}),
         "files": [
             {
                 "path": entry["path"],
                 "format": entry.get("format"),
                 "max_severity": max_severity(entry["findings"]),
+                **({"verdict": entry["verdict"]} if entry.get("verdict") else {}),
+                **({"engines": [{"name": r.engine, "version": r.version, "ran": r.ran, "error": r.error,
+                                 "worst": r.worst} for r in entry["engines"]]} if entry.get("engines") else {}),
                 **({"error": entry["error"]} if entry.get("error") else {}),
                 "findings": [asdict(f) for f in entry["findings"]],
                 **({"tensors": entry["tensors"]} if entry.get("tensors") is not None else {}),
@@ -268,6 +319,12 @@ def to_json_document(files: List[Dict[str, Any]], fail_on: str, tool_version: st
             for entry in files
         ],
     }
+
+
+def _overall(verdicts):
+    from aegis.verdict import overall
+
+    return overall(verdicts)
 
 
 def to_sarif(files: List[Dict[str, Any]], tool_version: str) -> Dict[str, Any]:

@@ -44,6 +44,8 @@ DANGEROUS_BUILTINS = frozenset({
 BUILTIN_MODULES = frozenset({"builtins", "__builtin__"})
 SAFE_MODULE_PREFIXES = ("torch", "collections", "numpy", "_codecs", "copyreg")
 
+MAX_KEPT_STREAMS = 64
+MAX_KEPT_STREAM_BYTES = 64 << 20
 # First pickle of a legacy (pre-zip) torch.save file is this magic number.
 LEGACY_TORCH_MAGIC = 0x1950A86A20F9469CFC6C
 # A legacy file holds five pickles (magic, protocol, sys_info, object, storage keys)
@@ -86,6 +88,9 @@ class PickleScanResult:
     format: str = "unknown"
     findings: List[PickleFinding] = field(default_factory=list)
     globals_seen: List[str] = field(default_factory=list)
+    # When a list, every pickle stream found is copied here as (location, bytes), for the
+    # optional engines in aegis/engines.py. None (the default) keeps nothing.
+    streams: Optional[List[Tuple[str, bytes]]] = field(default=None, repr=False, compare=False)
 
     @property
     def is_suspicious(self) -> bool:
@@ -265,9 +270,13 @@ def _scan_pickle_stream(
                     break
             if not finished:
                 break
-            pos = stream.tell()
+            end = stream.tell()
+            _keep_stream(result, f"{location}@{pos}", data, pos, end, best_effort)
+            pos = end
             complete += 1
         except Exception as error:
+            if resyncs == 0:
+                _keep_stream(result, f"{location}@{pos}", data, pos, len(data), best_effort)
             if report_malformed:
                 result.add(
                     "SUSPICIOUS",
@@ -283,6 +292,11 @@ def _scan_pickle_stream(
             pos = max(pos + 1, last_offset + 1)
             report_malformed = False  # one report per stream; later errors are resync noise
     return complete
+
+
+def _keep_stream(result: PickleScanResult, location: str, data, start: int, end: int, best_effort: bool) -> None:
+    if result.streams is not None and not best_effort and len(result.streams) < MAX_KEPT_STREAMS:
+        result.streams.append((location, bytes(data[start:min(end, start + MAX_KEPT_STREAM_BYTES)])))
 
 
 def _is_legacy_torch(data: bytes) -> bool:
@@ -515,10 +529,13 @@ def detect_file_format(path: Union[str, Path]) -> str:
     return detect_format(prefix, total_size=size) if prefix else "unknown"
 
 
-def scan_pickle_file(path: Union[str, Path]) -> PickleScanResult:
-    """Scan a model file without loading it. The format is taken from its bytes."""
+def scan_pickle_file(path: Union[str, Path], keep_streams: bool = False) -> PickleScanResult:
+    """Scan a model file without loading it. The format is taken from its bytes.
+
+    ``keep_streams`` copies each pickle stream into ``result.streams`` for the optional engines.
+    """
     path = Path(path)
-    result = PickleScanResult(path=str(path))
+    result = PickleScanResult(path=str(path), streams=[] if keep_streams else None)
     with open(path, "rb") as handle:
         if path.stat().st_size == 0:
             result.add("SUSPICIOUS", "empty file", path.name, code="unknown_format")

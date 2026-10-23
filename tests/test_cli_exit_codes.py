@@ -55,6 +55,7 @@ def whitespace_model(tmp_path):
 
 # --- Exit 0 -------------------------------------------------------------------
 
+@pytest.mark.claim("C16")
 @needs_core
 def test_clean_model_exits_0(clean_model):
     result = _scan(clean_model)
@@ -83,6 +84,7 @@ def test_clean_pickle_exits_0(tmp_path):
 
 # --- Exit 1 -------------------------------------------------------------------
 
+@pytest.mark.claim("C16")
 @needs_core
 def test_high_finding_exits_1_at_default(overwritten_model):
     result = _scan(overwritten_model)
@@ -116,6 +118,7 @@ def test_low_finding_exits_1_at_fail_on_low(clean_model):
     assert result.exit_code == EXIT_FINDINGS, result.output
 
 
+@pytest.mark.claim("C16")
 def test_critical_pickle_exits_1_even_at_fail_on_critical(tmp_path):
     path = tmp_path / "eval.pkl"
     path.write_bytes(b"\x80\x02cbuiltins\neval\nq\x00(X\x0c\x00\x00\x00print(1)q\x01tq\x02Rq\x03.")
@@ -136,10 +139,12 @@ def test_fail_on_is_case_insensitive(overwritten_model):
 
 # --- Exit 2 -------------------------------------------------------------------
 
+@pytest.mark.claim("C16")
 def test_missing_file_exits_2(tmp_path):
     assert _scan(tmp_path / "nope.safetensors").exit_code == EXIT_ERROR
 
 
+@pytest.mark.claim("C16")
 @needs_core
 def test_corrupt_safetensors_exits_2(tmp_path):
     path = tmp_path / "corrupt.safetensors"
@@ -172,7 +177,7 @@ def test_json_report_includes_max_severity_and_rules(overwritten_model, tmp_path
     result = _scan(overwritten_model, "-o", out)
     assert result.exit_code == EXIT_FINDINGS
     report = json.loads(out.read_text())
-    assert report["schema_version"] == "1.0.0"
+    assert report["schema_version"] == "1.1.0"
     assert report["max_severity"] == "high"
     assert report["fail_on"] == "medium"
     file_entry = report["files"][0]

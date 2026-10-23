@@ -79,7 +79,7 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         # Rust tensor rules (TensorScanResult.rules)
         "pooled_entropy", "exponent_lane", "out_of_range", "low_plane", "benford", "unreadable",
         # Header channels (FormatFinding.channel)
-        "metadata", "header_whitespace", "tensor_name",
+        "metadata", "header_whitespace", "tensor_name", "secret",
         # Container scanner (PickleFinding.code)
         "dangerous_import", "unknown_import", "unresolved_import", "extension_registry", "malformed_pickle",
         "zip_tampered", "no_payload", "container_unreadable", "archive_7z", "malformed_npy", "npy_object",
@@ -87,6 +87,8 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         # GGUF, Keras and ONNX scanners (aegis/modelformats.py)
         "gguf_template", "gguf_template_unverifiable", "gguf_malformed", "keras_lambda", "keras_custom_object",
         "onnx_external_path", "onnx_external_data", "onnx_custom_op", "format_unavailable",
+        # Optional engines (aegis/engines.py)
+        "engine_finding", "engine_disagreement", "engine_error",
         # Fuzzer
         "activation_spike",
     }
@@ -104,6 +106,7 @@ def test_container_scanner_only_emits_known_codes():
 
 # --- JSON findings document ---------------------------------------------------------
 
+@pytest.mark.claim("C15")
 @needs_core
 def test_json_output_validates_against_schema(model_files):
     result = _invoke(*model_files, "--format", "json")
@@ -141,6 +144,7 @@ def test_treatment_commands_are_attached(model_files):
 
 # --- SARIF --------------------------------------------------------------------------
 
+@pytest.mark.claim("C15")
 @needs_core
 def test_sarif_output_validates_against_the_official_schema(model_files):
     result = _invoke(*model_files, "--format", "sarif")
@@ -192,6 +196,7 @@ def test_text_format_is_unchanged_by_default(model_files):
 
 # --- Fuzz findings use the same finding object ----------------------------------------
 
+@pytest.mark.claim("C15")
 def test_fuzz_findings_validate_against_the_finding_definition(tmp_path):
     torch = pytest.importorskip("torch")
     from safetensors.torch import save_file as save_torch

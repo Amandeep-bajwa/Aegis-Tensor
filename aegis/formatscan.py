@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Union
 
+from aegis.secrets import find_secrets
+
 # Real metadata is a few short strings such as a format tag or a generator name.
 MAX_METADATA_VALUE_BYTES = 1024
 MAX_METADATA_TOTAL_BYTES = 4096
@@ -73,6 +75,14 @@ def scan_safetensors_header(path: Union[str, Path]) -> FormatScanResult:
             f"metadata totals {total} bytes (limit {MAX_METADATA_TOTAL_BYTES})",
             "sanitize",
         ))
+
+    for key, value in metadata.items():
+        for kind, masked in find_secrets(str(value)):
+            result.findings.append(FormatFinding(
+                "SUSPICIOUS", "secret", f"__metadata__['{key}']",
+                f"{kind} in metadata ({masked}) - leaked credential; tell the owner privately and have it revoked",
+                "sanitize",
+            ))
 
     # The canonical header has no whitespace. Any extra bytes are unexplained padding.
     # Re-serialise the parsed header as written, including an empty __metadata__ block.

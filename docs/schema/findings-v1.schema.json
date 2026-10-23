@@ -4,111 +4,412 @@
   "title": "Aegis-Tensor findings document",
   "description": "Output of `aegis scan --format json` and `--output-json`. Schema version 1.x; additive changes keep the major version, breaking changes bump it.",
   "type": "object",
-  "required": ["schema_version", "tool", "taxonomies", "generated_at", "fail_on", "max_severity", "files"],
+  "required": [
+    "schema_version",
+    "tool",
+    "taxonomies",
+    "generated_at",
+    "fail_on",
+    "max_severity",
+    "files"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": {"type": "string"},
-    "schema_version": {"type": "string", "pattern": "^1\\.\\d+\\.\\d+$"},
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
     "tool": {
       "type": "object",
-      "required": ["name", "version"],
+      "required": [
+        "name",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": {"const": "aegis-tensor"},
-        "version": {"type": "string"}
+        "name": {
+          "const": "aegis-tensor"
+        },
+        "version": {
+          "type": "string"
+        }
       }
     },
     "taxonomies": {
       "type": "object",
-      "required": ["atlas", "owasp"],
+      "required": [
+        "atlas",
+        "owasp"
+      ],
       "additionalProperties": false,
       "properties": {
         "atlas": {
           "description": "The pinned MITRE ATLAS release that every ATLAS reference comes from.",
           "type": "object",
-          "required": ["repository", "tag", "data_version", "sha256"],
+          "required": [
+            "repository",
+            "tag",
+            "data_version",
+            "sha256"
+          ],
           "additionalProperties": false,
           "properties": {
-            "repository": {"type": "string"},
-            "tag": {"type": "string"},
-            "data_version": {"type": "string"},
-            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "data_version": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           }
         },
-        "owasp": {"type": "array", "items": {"type": "string"}}
+        "owasp": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
-    "generated_at": {"type": "string", "format": "date-time"},
-    "fail_on": {"$ref": "#/$defs/severity"},
-    "max_severity": {"oneOf": [{"$ref": "#/$defs/severity"}, {"type": "null"}]},
-    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "fail_on": {
+      "$ref": "#/$defs/severity"
+    },
+    "max_severity": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/severity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "verdict": {
+      "$ref": "#/$defs/overall_verdict",
+      "description": "Added in 1.1.0. Worst verdict across files."
+    }
   },
   "$defs": {
-    "severity": {"enum": ["low", "medium", "high", "critical"]},
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
     "file": {
       "type": "object",
-      "required": ["path", "format", "max_severity", "findings"],
+      "required": [
+        "path",
+        "format",
+        "max_severity",
+        "findings"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": {"type": "string"},
-        "format": {"type": ["string", "null"]},
-        "max_severity": {"oneOf": [{"$ref": "#/$defs/severity"}, {"type": "null"}]},
-        "error": {"type": "string", "description": "Present when the file could not be scanned (exit code 2)."},
-        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
-        "tensors": {"type": "array", "items": {"type": "object"}, "description": "Per-tensor metrics for safetensors files."}
+        "path": {
+          "type": "string"
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_severity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/severity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": "string",
+          "description": "Present when the file could not be scanned (exit code 2)."
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "tensors": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Per-tensor metrics for safetensors files."
+        },
+        "verdict": {
+          "$ref": "#/$defs/verdict",
+          "description": "Added in 1.1.0."
+        },
+        "engines": {
+          "description": "Added in 1.1.0. Optional engines that ran on this file.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "ran"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "enum": [
+                  "fickling",
+                  "modelscan"
+                ]
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ran": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "worst": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/severity"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "finding": {
       "type": "object",
-      "required": ["id", "rule", "severity", "confidence", "message", "location", "evidence", "treatment", "references"],
+      "required": [
+        "id",
+        "rule",
+        "severity",
+        "confidence",
+        "message",
+        "location",
+        "evidence",
+        "treatment",
+        "references"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": {"type": "string", "pattern": "^[0-9a-f]{16}$", "description": "Stable across runs for the same rule and location."},
-        "rule": {"type": "string", "pattern": "^AEGIS-[A-Z]\\d{3}$"},
-        "severity": {"$ref": "#/$defs/severity"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "Prior confidence; not yet calibrated on real models."},
-        "message": {"type": "string"},
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "Stable across runs for the same rule and location."
+        },
+        "rule": {
+          "type": "string",
+          "pattern": "^AEGIS-[A-Z]\\d{3}$"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Prior confidence; not yet calibrated on real models."
+        },
+        "message": {
+          "type": "string"
+        },
         "location": {
           "type": "object",
-          "required": ["file"],
+          "required": [
+            "file"
+          ],
           "additionalProperties": false,
           "properties": {
-            "file": {"type": "string"},
-            "tensor": {"type": "string"},
-            "entry": {"type": "string", "description": "Archive member, e.g. archive/data.pkl."},
-            "offset": {"type": "integer", "minimum": 0, "description": "Byte offset of the opcode within the entry or file."},
-            "header_key": {"type": "string"},
-            "layer": {"type": "string"}
+            "file": {
+              "type": "string"
+            },
+            "tensor": {
+              "type": "string"
+            },
+            "entry": {
+              "type": "string",
+              "description": "Archive member, e.g. archive/data.pkl."
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Byte offset of the opcode within the entry or file."
+            },
+            "header_key": {
+              "type": "string"
+            },
+            "layer": {
+              "type": "string"
+            }
           }
         },
-        "evidence": {"type": "object"},
+        "evidence": {
+          "type": "object"
+        },
         "treatment": {
           "type": "object",
-          "required": ["action"],
+          "required": [
+            "action"
+          ],
           "additionalProperties": false,
           "properties": {
-            "action": {"enum": ["disarm", "strip", "quarantine", "refuse", "inspect"]},
-            "command": {"type": "string"}
+            "action": {
+              "enum": [
+                "disarm",
+                "strip",
+                "quarantine",
+                "refuse",
+                "inspect"
+              ]
+            },
+            "command": {
+              "type": "string"
+            }
           }
         },
         "references": {
           "type": "object",
-          "required": ["atlas", "owasp"],
+          "required": [
+            "atlas",
+            "owasp"
+          ],
           "additionalProperties": false,
           "properties": {
             "atlas": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "name"],
+                "required": [
+                  "id",
+                  "name"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "id": {"type": "string", "pattern": "^AML\\.T\\d{4}(\\.\\d{3})?$"},
-                  "name": {"type": "string"}
+                  "id": {
+                    "type": "string",
+                    "pattern": "^AML\\.T\\d{4}(\\.\\d{3})?$"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
                 }
               }
             },
-            "owasp": {"type": "array", "items": {"type": "string", "pattern": "^(ML\\d{2}:2023|LLM\\d{2}:2025) "}}
+            "owasp": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(ML\\d{2}:2023|LLM\\d{2}:2025) "
+              }
+            }
+          }
+        }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": [
+        "level",
+        "label",
+        "reason",
+        "next_step",
+        "command",
+        "disclosure"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "critical",
+            "suspicious",
+            "no_known_findings"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "next_step": {
+          "type": "string"
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "disclosure": {
+          "enum": [
+            "platform",
+            "owner",
+            "none"
+          ],
+          "description": "How to disclose a confirmed finding (SECURITY.md)."
+        }
+      }
+    },
+    "overall_verdict": {
+      "type": "object",
+      "required": [
+        "level",
+        "label",
+        "files"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "critical",
+            "suspicious",
+            "no_known_findings"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
           }
         }
       }

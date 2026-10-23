@@ -46,6 +46,11 @@ dev = [
     "onnx>=1.16",                # ONNX scanner tests (optional at runtime)
     "h5py>=3.10",                # legacy Keras HDF5 scanner tests (optional at runtime)
 ]
+# Optional engines folded into the Aegis verdict (aegis/engines.py).
+engines = [
+    "fickling>=0.1.12",
+    "modelscan>=0.8",
+]
 # Benchmarks in benchmarks/. backdoor_eval.py also needs tensorflow (Python 3.12 or older).
 bench = [
     "huggingface_hub>=0.25",

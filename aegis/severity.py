@@ -30,6 +30,7 @@ HEADER_CHANNEL_SEVERITY = {
     "metadata": "high",
     "header_whitespace": "medium",
     "tensor_name": "medium",
+    "secret": "medium",
 }
 # Pickle severities come from PickleFinding.severity.
 PICKLE_SEVERITY = {
