@@ -60,6 +60,7 @@ def _write(path, data: bytes):
 
 # --- (b) stack and memo simulation ---------------------------------------------
 
+@pytest.mark.claim("C01", "C03")
 def test_memo_assembled_os_system_is_resolved(tmp_path, marker):
     result = scan_pickle_file(_write(tmp_path / "m.pkl", memo_assembled_system(marker)))
     assert result.is_critical
@@ -69,6 +70,7 @@ def test_memo_assembled_os_system_is_resolved(tmp_path, marker):
     assert critical.location.startswith("m.pkl@")
 
 
+@pytest.mark.claim("C03")
 def test_long_binput_and_get_variants_are_resolved(tmp_path, marker):
     # PUT/GET (protocol 0 text), BINPUT/BINGET and LONG_BINPUT/LONG_BINGET memo opcodes.
     payload = (
@@ -84,12 +86,14 @@ def test_long_binput_and_get_variants_are_resolved(tmp_path, marker):
     assert result.is_critical
 
 
+@pytest.mark.claim("C03")
 def test_unresolvable_stack_global_is_reported(tmp_path, marker):
     payload = b"\x80\x04" + b"K\x01" + b"K\x02" + b"\x93" + b"N."  # ints, not strings
     result = scan_pickle_file(_write(tmp_path / "m.pkl", payload))
     assert any("could not be resolved" in f.message for f in result.findings)
 
 
+@pytest.mark.claim("C02")
 def test_protocol_0_global_is_detected(tmp_path, marker):
     class _Exec:
         def __reduce__(self):
@@ -102,6 +106,7 @@ def test_protocol_0_global_is_detected(tmp_path, marker):
 
 # --- (a) routing by magic bytes -----------------------------------------------
 
+@pytest.mark.claim("C01", "C02")
 def test_renamed_extension_is_routed_by_magic_bytes(tmp_path, marker):
     path = _write(tmp_path / "model.safetensors", memo_assembled_system(marker))
     assert detect_file_format(path) == "pickle"
@@ -110,6 +115,7 @@ def test_renamed_extension_is_routed_by_magic_bytes(tmp_path, marker):
     assert "os.system" in result.output
 
 
+@pytest.mark.claim("C01", "C02")
 def test_7z_wrapped_payload_is_inspected(tmp_path, marker):
     py7zr = pytest.importorskip("py7zr")
     path = tmp_path / "model.pt"
@@ -122,6 +128,7 @@ def test_7z_wrapped_payload_is_inspected(tmp_path, marker):
     assert any(f.location.endswith("archive/data.pkl@35") for f in result.findings if f.severity == "CRITICAL")
 
 
+@pytest.mark.claim("C02")
 def test_npy_object_array_payload_is_detected(tmp_path, marker):
     class _Exec:
         def __reduce__(self):
@@ -150,6 +157,7 @@ def test_unknown_format_is_a_finding(tmp_path):
     assert not result.is_critical
 
 
+@pytest.mark.claim("C03")
 def test_payload_behind_junk_prefix_is_found_by_best_effort_scan(tmp_path, marker):
     path = _write(tmp_path / "model.bin", b"\x00\x00\x00" + eval_global())
     result = scan_pickle_file(path)
@@ -160,6 +168,7 @@ def test_payload_behind_junk_prefix_is_found_by_best_effort_scan(tmp_path, marke
 
 # --- (c) continue past malformed opcodes --------------------------------------
 
+@pytest.mark.claim("C01", "C03")
 def test_broken_stream_after_payload(tmp_path, marker):
     payload = memo_assembled_system(marker)[:-1] + b"\xff\xfe broken tail"
     result = scan_pickle_file(_write(tmp_path / "broken.pkl", payload))
@@ -167,6 +176,7 @@ def test_broken_stream_after_payload(tmp_path, marker):
     assert any("malformed" in f.message for f in result.findings)
 
 
+@pytest.mark.claim("C03")
 def test_every_global_is_reported_across_a_malformed_region(tmp_path, marker):
     payload = memo_assembled_system(marker) + b"\xff\xfe\xfd" + eval_global()
     result = scan_pickle_file(_write(tmp_path / "two.pkl", payload))
@@ -180,6 +190,31 @@ def test_legacy_torch_format_is_clean_and_its_storage_tail_is_not_parsed(tmp_pat
     result = scan_pickle_file(path)
     assert result.format == "pytorch-legacy"
     assert not result.is_suspicious, result.findings
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_legacy_torch_object_pickle_is_found(tmp_path, marker):
+    magic = pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
+    path = _write(tmp_path / "legacy.pt", magic + pickle.dumps(1001, protocol=2) + pickle.dumps({}, protocol=2)
+                  + memo_assembled_system(marker) + pickle.dumps([], protocol=2))
+    result = scan_pickle_file(path)
+    assert result.format == "pytorch-legacy"
+    assert any(f.code == "dangerous_import" and "os.system" in f.message for f in result.findings), result.findings
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_legacy_tar_checkpoint_is_found(tmp_path, marker):
+    import tarfile
+
+    path = tmp_path / "legacy_tar.pt"
+    with tarfile.open(path, "w") as archive:
+        for name, data in (("sys_info", pickle.dumps({})), ("pickle", memo_assembled_system(marker))):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    result = scan_pickle_file(path)
+    assert result.format == "tar"
+    assert any(f.code == "dangerous_import" for f in result.findings), result.findings
 
 
 # --- (d) tampered zip entries -------------------------------------------------
@@ -202,6 +237,7 @@ def _patch_all(blob: bytes, signature: bytes, offset: int, fmt: str, transform) 
     return bytes(data)
 
 
+@pytest.mark.claim("C03")
 def test_zip_with_encryption_flag_set_is_still_scanned(tmp_path, marker):
     blob = _torch_style_zip(memo_assembled_system(marker))
     blob = _patch_all(blob, b"PK\x03\x04", 6, "<H", lambda v: v | 0x1)  # local headers
@@ -213,6 +249,7 @@ def test_zip_with_encryption_flag_set_is_still_scanned(tmp_path, marker):
     assert any("encryption flag" in f.message for f in result.findings)
 
 
+@pytest.mark.claim("C03")
 def test_zip_with_bad_crc_is_still_scanned(tmp_path, marker):
     blob = _torch_style_zip(memo_assembled_system(marker))
     blob = _patch_all(blob, b"PK\x01\x02", 16, "<I", lambda v: v ^ 0xDEADBEEF)
@@ -222,6 +259,7 @@ def test_zip_with_bad_crc_is_still_scanned(tmp_path, marker):
     assert any("CRC" in f.message for f in result.findings)
 
 
+@pytest.mark.claim("C03")
 def test_zip_with_damaged_central_directory_falls_back_to_local_headers(tmp_path, marker):
     blob = _torch_style_zip(memo_assembled_system(marker))
     cut = blob.rfind(b"PK\x05\x06")

@@ -36,6 +36,7 @@ def _fuzz(*args):
 
 # --- Safetensors into a trusted architecture -----------------------------------
 
+@pytest.mark.claim("C12")
 def test_backdoor_in_safetensors_is_found_without_pickle(tmp_path):
     torch.manual_seed(0)
     path = tmp_path / "backdoor.safetensors"
@@ -94,6 +95,7 @@ def test_arch_without_input_shape_or_vocab_is_an_error(tmp_path):
     assert "--input-shape" in result.output
 
 
+@pytest.mark.claim("C01", "C12")
 def test_full_module_pickle_is_refused_without_trust(tmp_path):
     marker = tmp_path / "MARKER"
     path = tmp_path / "evil.pt"
@@ -106,6 +108,7 @@ def test_full_module_pickle_is_refused_without_trust(tmp_path):
 
 # --- Sandboxed --trust-pickle ----------------------------------------------------
 
+@pytest.mark.claim("C13")
 @needs_sandbox
 def test_trusted_pickle_is_fuzzed_in_the_sandbox(tmp_path):
     torch.manual_seed(0)
@@ -118,6 +121,7 @@ def test_trusted_pickle_is_fuzzed_in_the_sandbox(tmp_path):
     assert report["suspected_trojan"] and "fc2" in report["suspicious_layers"]
 
 
+@pytest.mark.claim("C13")
 @needs_sandbox
 def test_sandbox_blocks_network_at_the_os_level(tmp_path):
     from aegis.sandbox import run_sandboxed
@@ -126,6 +130,7 @@ def test_sandbox_blocks_network_at_the_os_level(tmp_path):
     assert response["probe"]["network"].startswith("blocked")
 
 
+@pytest.mark.claim("C14")
 @needs_sandbox
 @macos_only
 def test_sandbox_confines_writes_and_blocks_shell(tmp_path):
@@ -138,6 +143,7 @@ def test_sandbox_confines_writes_and_blocks_shell(tmp_path):
     assert not outside.exists()
 
 
+@pytest.mark.claim("C14")
 @needs_sandbox
 @macos_only
 def test_payload_cannot_act_on_the_host_even_when_trusted(tmp_path):

@@ -57,6 +57,7 @@ def _tensors(path: Path) -> dict:
 
 # --- Tensor-level threats -----------------------------------------------------
 
+@pytest.mark.claim("C06")
 @needs_core
 def test_t01_structured_lsb_payload_is_pinpointed_and_disarmed(tmp_path):
     payload = np.unpackbits(np.frombuffer(b"connect 10.0.0.5:4444 /bin/sh " * 200, np.uint8), bitorder="little")
@@ -74,6 +75,7 @@ def test_t01_structured_lsb_payload_is_pinpointed_and_disarmed(tmp_path):
     assert not _tensors(cleaned)["layer.weight"].is_suspicious
 
 
+@pytest.mark.claim("C09", "L01")
 @needs_core
 def test_t02_random_lsb_payload_is_a_documented_blind_spot_and_disarm_removes_it(tmp_path):
     rng = np.random.default_rng(2)
@@ -90,6 +92,7 @@ def test_t02_random_lsb_payload_is_a_documented_blind_spot_and_disarm_removes_it
     assert np.all(recovered == 0)  # payload gone
 
 
+@pytest.mark.claim("C05")
 @needs_core
 def test_t03_overwritten_tensor_is_flagged_and_quarantined(tmp_path):
     blob = np.random.default_rng(3).integers(0, 256, 4 * 65536, dtype=np.uint8).view(np.float32)
@@ -99,6 +102,7 @@ def test_t03_overwritten_tensor_is_flagged_and_quarantined(tmp_path):
     assert not results["ok.weight"].is_suspicious
 
 
+@pytest.mark.claim("C05")
 @needs_core
 def test_t04_partial_overwrite_of_one_percent_is_flagged(tmp_path):
     rng = np.random.default_rng(4)
@@ -121,6 +125,7 @@ def test_t08_clean_model_has_no_findings_in_any_channel(tmp_path):
 
 # --- Container and header channels --------------------------------------------
 
+@pytest.mark.claim("C07")
 def test_t05_payload_in_metadata_is_flagged_and_stripped(tmp_path):
     path = _write(tmp_path / "m.safetensors", {"w": _weights(5)}, metadata={"note": "A" * 200_000})
     header = scan_safetensors_header(path)
@@ -133,6 +138,7 @@ def test_t05_payload_in_metadata_is_flagged_and_stripped(tmp_path):
     assert not scan_safetensors_header(cleaned).is_suspicious
 
 
+@pytest.mark.claim("C07")
 def test_t06_whitespace_channel_in_header_is_flagged(tmp_path):
     path = _write(tmp_path / "m.safetensors", {"w": _weights(6)})
     _rewrite_header(path, lambda h: h)  # re-serialise to the canonical form
@@ -146,6 +152,7 @@ def test_t06_whitespace_channel_in_header_is_flagged(tmp_path):
     assert result.findings[0].channel == "header_whitespace"
 
 
+@pytest.mark.claim("C07")
 def test_t07_oversized_tensor_name_is_flagged_for_quarantine(tmp_path):
     long_name = "x" * 600
     path = _write(tmp_path / "m.safetensors", {long_name: _weights(7)})
@@ -174,6 +181,7 @@ class _Exec:
         return (os.system, (f"touch {self.marker}",))
 
 
+@pytest.mark.claim("C02")
 def test_t10_os_system_pickle_is_critical_and_pinpointed(tmp_path):
     path = tmp_path / "evil.pkl"
     path.write_bytes(pickle.dumps({"w": _Exec(tmp_path / "pwned")}))
@@ -182,12 +190,14 @@ def test_t10_os_system_pickle_is_critical_and_pinpointed(tmp_path):
     assert any("system" in f.message for f in result.findings)
 
 
+@pytest.mark.claim("C02")
 def test_t11_builtins_eval_pickle_is_critical(tmp_path):
     path = tmp_path / "eval.pkl"
     path.write_bytes(b"\x80\x02cbuiltins\neval\nq\x00(X\x0c\x00\x00\x00print(1)q\x01tq\x02Rq\x03.")
     assert scan_pickle_file(path).is_critical
 
 
+@pytest.mark.claim("C03")
 def test_t12_malformed_pickle_is_reported_not_skipped(tmp_path):
     clean = pickle.dumps({"w": [1.0] * 100})
     path = tmp_path / "broken.pkl"
@@ -196,6 +206,7 @@ def test_t12_malformed_pickle_is_reported_not_skipped(tmp_path):
     assert result.is_suspicious
 
 
+@pytest.mark.claim("C01", "C12")
 @needs_torch
 def test_t13_unsafe_pickle_is_never_executed_without_trust(tmp_path):
     """The payload writes a marker file. Fuzzing must refuse to load it, so no marker appears."""
@@ -265,6 +276,7 @@ def test_t16_clean_network_is_not_flagged_at_any_input_scale():
 # records them as out of scope, so they have no tests here.
 
 
+@pytest.mark.claim("C05")
 @needs_core
 def test_t17_nan_and_inf_injection_is_flagged(tmp_path):
     """Non-finite weights break inference (NaN propagation, overflow). Caught by the out-of-range rule."""
@@ -293,6 +305,7 @@ def test_t18_scan_output_names_the_metadata_payload_and_its_treatment(tmp_path):
     reason="Known gap: tensors under 256 elements are below the sample floor, so a payload "
            "split into many tiny tensors is not flagged. Strict, so closing the gap will be noticed.",
 )
+@pytest.mark.claim("L02")
 def test_t19_payload_split_into_tiny_tensors_is_flagged(tmp_path):
     rng = np.random.default_rng(19)
     tiny = {f"chunk.{i}": rng.integers(0, 256, 4 * 64, dtype=np.uint8).view(np.float32) for i in range(64)}

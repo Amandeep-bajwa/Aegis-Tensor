@@ -66,6 +66,7 @@ def test_gguf_clean_model_has_no_findings(tmp_path):
     assert entry["tensors"][0]["name"] == "blk.0.attn_q.weight"
 
 
+@pytest.mark.claim("C04")
 @needs_core
 def test_gguf_template_injection_is_critical(tmp_path):
     path = tmp_path / "evil.gguf"
@@ -85,6 +86,7 @@ def test_gguf_named_template_variant_is_checked(tmp_path):
     assert entry["findings"][0]["rule"] == "AEGIS-G001"
 
 
+@pytest.mark.claim("C05")
 @needs_core
 def test_gguf_overwritten_float_tensor_gets_tensor_rules(tmp_path):
     path = tmp_path / "blob.gguf"
@@ -137,6 +139,7 @@ def test_clean_keras_model_has_no_findings(tmp_path):
     assert code == 0 and entry["findings"] == []
 
 
+@pytest.mark.claim("C08")
 def test_keras_lambda_and_custom_objects_are_flagged(tmp_path):
     path = keras_file(tmp_path / "evil.keras", [DENSE, LAMBDA, CUSTOM])
     code, entry = _scan_json(path)
@@ -146,6 +149,7 @@ def test_keras_lambda_and_custom_objects_are_flagged(tmp_path):
     assert ("AEGIS-K002", "bd") in rules
 
 
+@pytest.mark.claim("C05", "C08")
 @needs_core
 def test_legacy_h5_model_config_and_weights_are_checked(tmp_path):
     h5py = pytest.importorskip("h5py")
@@ -196,6 +200,7 @@ def test_clean_onnx_model_has_no_findings(tmp_path):
     assert entry["tensors"][0]["name"] == "w"
 
 
+@pytest.mark.claim("C05", "C08")
 @needs_core
 def test_onnx_external_paths_custom_ops_and_tensor_rules(tmp_path):
     onnx = pytest.importorskip("onnx")

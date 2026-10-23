@@ -30,6 +30,8 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
+    env:
+      AEGIS_REQUIRE_CLAIMS: "1"  # a skipped test behind a README claim fails the build (tests/conftest.py)
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -49,7 +51,7 @@ jobs:
       - name: Build native extension and install with dev and fuzzer extras
         run: |
           source venv/bin/activate
-          pip install -e ".[dev,fuzzer]"
+          pip install -e ".[dev,fuzzer,engines]"
       - name: Check torch is the CPU build
         run: |
           source venv/bin/activate
@@ -59,7 +61,33 @@ jobs:
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           unshare -rn true && echo "unshare -rn available"
-      - name: Run test suite (CLI, exit codes, scanners, disarm, fuzzer, threat matrix)
+      - name: Run test suite (CLI, exit codes, scanners, disarm, fuzzer, threat matrix, claims)
+        run: |
+          source venv/bin/activate
+          pytest -v tests/
+
+  macos-check:
+    # The macOS sandbox (sandbox-exec) confines writes and process spawning; claim C14 is proved here.
+    name: macOS Python 3.12 Build & Tests
+    runs-on: macos-latest
+    env:
+      AEGIS_REQUIRE_CLAIMS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU PyTorch, then the project with dev, fuzzer and engines extras
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,fuzzer,engines]"
+      - name: Run test suite
         run: |
           source venv/bin/activate
           pytest -v tests/

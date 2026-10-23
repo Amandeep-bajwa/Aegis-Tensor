@@ -72,6 +72,7 @@ def test_templates_that_load_other_templates_cannot_be_verified():
     assert check_template("{% for %}")[0][0] == "unverifiable"
 
 
+@pytest.mark.claim("C01")
 def test_template_analysis_never_renders(tmp_path):
     marker = tmp_path / "rendered"
     # Would create the marker if rendered in an unsandboxed environment; parsing alone must not.
@@ -80,6 +81,7 @@ def test_template_analysis_never_renders(tmp_path):
     assert not marker.exists()
 
 
+@pytest.mark.claim("C04")
 def test_obfuscated_gguf_template_is_critical(tmp_path):
     path = tmp_path / "evil.gguf"
     path.write_bytes(gguf_bytes([("tokenizer.chat_template", BYPASSES["concatenated_name"].replace(

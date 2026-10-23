@@ -1,0 +1,118 @@
+{
+  "about": "Claims register. Every claim in the README comes from here and is proved by the tests marked @pytest.mark.claim(<id>). Benchmark claims are re-checked against the committed results and the rules fingerprint they were produced under. Render the README section with `python scripts/claims.py --write`; tests/test_claims.py fails if anything is out of step.",
+  "claims": [
+    {
+      "id": "C01",
+      "text": "Scanning never runs code from the file being scanned. Every malicious test fixture would create a marker file if executed, and each test checks that the marker is still absent afterwards."
+    },
+    {
+      "id": "C02",
+      "text": "Detects pickle imports of code-execution primitives (for example `os.system`, `builtins.eval`) in raw pickles, PyTorch zip and legacy tar checkpoints, numpy object arrays and 7z archives, whatever the file extension."
+    },
+    {
+      "id": "C03",
+      "text": "Resolves callables assembled from memoized strings (memo PUT/GET plus STACK_GLOBAL). It keeps scanning past malformed bytes and tampered zip entries, and reports every global it sees."
+    },
+    {
+      "id": "C04",
+      "text": "Flags Jinja template injection in GGUF chat templates, including the bypasses an attacker who knows the rules would try. These are names built at render time; names hidden in variables, namespaces or macro arguments; names reached through `attr`, `map` or `str.format`; and names taken from `eos_token`."
+    },
+    {
+      "id": "C05",
+      "text": "Flags float tensors whose values were overwritten, either whole or in about 1% of values, and NaN/Inf injection. This covers safetensors, GGUF, ONNX and Keras/HDF5 files."
+    },
+    {
+      "id": "C06",
+      "text": "Flags structured data (text or code) hidden in the least significant mantissa bits."
+    },
+    {
+      "id": "C07",
+      "text": "Flags payloads in safetensors `__metadata__`, in header whitespace and in tensor names."
+    },
+    {
+      "id": "C08",
+      "text": "Flags Keras `Lambda` layers and non-Keras custom objects. Flags ONNX external-data paths that leave the model directory, and ONNX custom operators."
+    },
+    {
+      "id": "C09",
+      "text": "`aegis disarm` removes any payload stored in the rounded-away low mantissa bits, whether or not a scan detected it. It refuses any width that would reach the exponent."
+    },
+    {
+      "id": "C10",
+      "kind": "benchmark",
+      "benchmark": "docs/calibration.md",
+      "text": "False positives at default thresholds on popular public models: {safetensors_flagged} of {safetensors_models} safetensors models, {mlx_flagged} of {mlx_models} MLX models and {gguf_flagged} of {gguf_models} GGUF files raise a finding. {template_flagged} of {template_files} GGUF files have a flagged chat template.",
+      "values": {
+        "safetensors_flagged": 0,
+        "safetensors_models": 3,
+        "mlx_flagged": 0,
+        "mlx_models": 0,
+        "gguf_flagged": 0,
+        "gguf_models": 0,
+        "template_flagged": 0,
+        "template_files": 3
+      },
+      "status": "pending"
+    },
+    {
+      "id": "C11",
+      "kind": "benchmark",
+      "benchmark": "docs/disarm_impact.md",
+      "text": "At its default width, `aegis disarm` changed ViT ImageNet top-1 by {vit} points, BERT SST-2 accuracy by {bert} points, GPT-2 WikiText perplexity by {gpt2} (float32) and {gpt2_f16} (float16), and Qwen2.5-0.5B perplexity by {qwen} (bfloat16).",
+      "values": {
+        "vit": "+0.00",
+        "bert": "+0.00",
+        "gpt2": "+0.00",
+        "gpt2_f16": "+0.10",
+        "qwen": "+0.12"
+      }
+    },
+    {
+      "id": "C12",
+      "text": "`aegis fuzz` loads weights from safetensors into an architecture you supply, so no pickle runs. A pickled full module is refused unless you pass `--trust-pickle`."
+    },
+    {
+      "id": "C13",
+      "text": "With `--trust-pickle`, the module is unpickled in a subprocess with no network access."
+    },
+    {
+      "id": "C14",
+      "platform": "darwin",
+      "text": "On macOS, a `--trust-pickle` load also cannot write outside a temporary directory or start other programs."
+    },
+    {
+      "id": "C15",
+      "text": "`--format json` output validates against `docs/schema/findings-v1.schema.json`, and `--format sarif` output validates against the official SARIF 2.1.0 schema."
+    },
+    {
+      "id": "C16",
+      "text": "Exit codes: 0 means no finding at or above `--fail-on`, 1 means findings, and 2 means a file could not be scanned."
+    },
+    {
+      "id": "C17",
+      "text": "Every scanned file gets one verdict with a next step. CRITICAL (do not load) means a code-execution payload or a file that loads code. SUSPICIOUS means an anomaly: disarm, or get the file elsewhere. NO KNOWN FINDINGS still recommends disarm. Each verdict says how to disclose a confirmed problem."
+    },
+    {
+      "id": "C18",
+      "text": "Flags credentials (API keys, tokens, private keys) left in safetensors or GGUF metadata, showing only a masked form."
+    },
+    {
+      "id": "C19",
+      "text": "If Fickling or ModelScan is installed, Aegis runs it on the same file and folds its result into the Aegis verdict. A disagreement between Aegis and an engine is reported as a finding, in either direction."
+    },
+    {
+      "id": "C20",
+      "text": "`aegis report-bundle` writes a folder for you to review: findings, SHA-256 hashes, repository URL and revision. It never sends anything and never copies the model file."
+    },
+    {
+      "id": "L01",
+      "kind": "limit",
+      "text": "Random bits hidden in the low mantissa bits cannot be detected by any static statistic. Only `aegis disarm` removes them."
+    },
+    {
+      "id": "L02",
+      "kind": "limit",
+      "text": "Payloads split across tensors of fewer than 256 elements are not detected."
+    }
+  ]
+}
