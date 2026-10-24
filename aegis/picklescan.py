@@ -648,9 +648,100 @@ def _scan_tar(data, result: PickleScanResult, label: str, depth: int) -> None:
             if member.name in ("pickle", "sys_info"):
                 _scan_pickle_stream(payload, result, where)
             elif member.name in ("storages", "tensors"):
-                _scan_pickle_stream(payload, result, where, max_pickles=1, report_malformed=False)
+                _scan_legacy_member(payload, result, where, member.name)
             elif depth < MAX_NESTING:
                 _scan_bytes(payload, result, where, depth + 1, report_unknown=False)
+
+
+# Bytes per element of the typed storages a legacy tar `storages` member names.
+_LEGACY_STORAGE_BYTES = {
+    "DoubleStorage": 8,
+    "FloatStorage": 4,
+    "HalfStorage": 2,
+    "BFloat16Storage": 2,
+    "LongStorage": 8,
+    "IntStorage": 4,
+    "ShortStorage": 2,
+    "CharStorage": 1,
+    "ByteStorage": 1,
+    "BoolStorage": 1,
+    "ComplexDoubleStorage": 16,
+    "ComplexFloatStorage": 8,
+    "QInt8Storage": 1,
+    "QUInt8Storage": 1,
+    "QInt32Storage": 4,
+    "QUInt4x2Storage": 1,
+    "QUInt2x4Storage": 1,
+}
+MAX_LEGACY_NDIM = 64
+
+
+def _scan_one_pickle(data: bytes, start: int, result: PickleScanResult, location: str) -> int | None:
+    """Scan the single pickle at ``start``. Its end offset, or None if it is malformed."""
+    stream = io.BytesIO(data)
+    stream.seek(start)
+    stack: list = []
+    memo: dict = {}
+    offset = start
+    try:
+        for op, arg, position in pickletools.genops(stream):
+            offset = offset if position is None else position
+            _step(op, arg, offset, stack, memo, result, location)
+            if op.name == "STOP":
+                end = stream.tell()
+                _keep_stream(result, f"{location}@{start}", data, start, end, False)
+                return end
+    except Exception:
+        return None
+    return None
+
+
+def _legacy_record_end(data: bytes, end: int, kind: str, imported: list[str]) -> int | None:
+    """Where the next record starts, after the binary data that follows a record's pickle."""
+    if kind == "storages":
+        widths = [
+            _LEGACY_STORAGE_BYTES[g.rsplit(".", 1)[-1]]
+            for g in imported
+            if g.rsplit(".", 1)[-1] in _LEGACY_STORAGE_BYTES
+        ]
+        if not widths:
+            return end  # a pickle without a storage type (the storage views) has no data after it
+        if end + 8 > len(data):
+            return None
+        (count,) = struct.unpack_from("<q", data, end)
+        following = end + 8 + count * widths[-1]
+        return following if count >= 0 and following <= len(data) else None
+    if end + 8 > len(data):
+        return None
+    (ndim,) = struct.unpack_from("<i", data, end)
+    if not 0 <= ndim <= MAX_LEGACY_NDIM:
+        return None
+    following = end + 8 + 16 * ndim + 8  # ndim and padding, sizes and strides, storage offset
+    return following if following <= len(data) else None
+
+
+def _scan_legacy_member(data: bytes, result: PickleScanResult, where: str, kind: str) -> None:
+    """Every pickle in a legacy tar `storages` or `tensors` member, read as torch reads it: a count
+    pickle, then one pickle per record with binary data after it, which is skipped by its stated size
+    so tensor bytes are never parsed as opcodes. A member that cannot be walked is reported, and the
+    rest of it is still scanned for imports."""
+    position: int | None = _scan_one_pickle(data, 0, result, where)
+    failed_at = 0
+    while position is not None and position < len(data):
+        failed_at = position
+        seen = len(result.globals_seen)
+        end = _scan_one_pickle(data, position, result, where)
+        position = None if end is None else _legacy_record_end(data, end, kind, result.globals_seen[seen:])
+        if end is not None and position is None:
+            failed_at = end
+    if position is None:
+        result.add(
+            "SUSPICIOUS",
+            f"legacy `{kind}` member could not be read record by record; the rest was scanned for imports",
+            f"{where}@{failed_at}",
+            code="malformed_pickle",
+        )
+        _scan_pickle_stream(data[failed_at:], result, f"{where}[from byte {failed_at}]", best_effort=True)
 
 
 def _scan_7z(data, result: PickleScanResult, label: str, depth: int) -> None:

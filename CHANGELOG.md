@@ -24,6 +24,9 @@ backfilled (issue A3).
   runtime (for example `operator.attrgetter("system")(obj)(...)`), even through the memo, is
   critical (rule AEGIS-P013). Pickles embedded in PyTorch storages (`torch.storage._load_from_bytes`)
   are scanned too, up to a nesting limit.
+- Legacy tar checkpoints: every pickle in the `storages` and `tensors` members is scanned, not only
+  the first. Members are read record by record as PyTorch reads them, so raw tensor bytes are never
+  parsed as opcodes; a member that cannot be read that way is reported and still scanned.
 
 ### Fixed
 - `aegis fuzz` refuses an unsupported file before asking for PyTorch.

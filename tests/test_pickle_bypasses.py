@@ -400,3 +400,84 @@ def test_plainly_pickled_tensors_are_clean(tmp_path):
 
     path = _write(tmp_path / "plain.pkl", pickle.dumps({"w": torch.ones(3, 3), "b": torch.zeros(2)}))
     assert scan_pickle_file(path).findings == []
+
+
+# --- (g) every pickle in legacy tar `storages` and `tensors` members ---------------------
+# Layout as torch.serialization.legacy_load reads it: a count pickle, then per storage a
+# (key, location, StorageType) pickle, an int64 element count and the raw data; per tensor a
+# (key, storage_id, type) pickle and a binary header (ndim, padding, sizes, strides, offset).
+
+
+def _storage_descriptor(key: str) -> bytes:
+    return (
+        b"\x80\x02X" + struct.pack("<I", len(key)) + key.encode() + b"X\x03\x00\x00\x00cpuctorch\nFloatStorage\n\x87."
+    )
+
+
+def _storages_member(raw_blocks, descriptor_payload: bytes | None = None) -> bytes:
+    out = pickle.dumps(len(raw_blocks), protocol=2)
+    for index, raw in enumerate(raw_blocks):
+        descriptor = _storage_descriptor(f"k{index}")
+        if descriptor_payload is not None and index == len(raw_blocks) - 1:
+            descriptor = descriptor_payload
+        out += descriptor + struct.pack("<q", len(raw) // 4) + raw
+    return out + pickle.dumps([], protocol=2)  # storage views
+
+
+def _tensors_member(count: int, last_args: bytes | None = None) -> bytes:
+    out = pickle.dumps(count, protocol=2)
+    for index in range(count):
+        args = pickle.dumps((f"t{index}", f"k{index}", 0), protocol=2)
+        if last_args is not None and index == count - 1:
+            args = last_args
+        out += args + struct.pack("<i", 2) + b"\x00" * 4 + struct.pack("<2q", 4, 4) + struct.pack("<2q", 4, 1)
+        out += struct.pack("<q", 0)
+    return out
+
+
+_OPCODE_LOOKALIKE = b"cos\nsystem\n(S'x'\ntR." * 8  # raw tensor bytes that resemble a pickle
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_a_later_storage_descriptor_is_found(tmp_path, marker):
+    raw = np.ones(64, dtype=np.float32).tobytes()
+    storages = _storages_member([raw, raw], descriptor_payload=memo_assembled_system(marker))
+    path = _legacy_tar(tmp_path / "legacy.tar", [("sys_info", pickle.dumps({})), ("storages", storages)])
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "storages" in f.location for f in result.findings), result.findings
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_a_later_tensor_record_is_found(tmp_path):
+    path = _legacy_tar(
+        tmp_path / "legacy.tar", [("sys_info", pickle.dumps({})), ("tensors", _tensors_member(3, eval_global()))]
+    )
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "tensors" in f.location for f in result.findings), result.findings
+
+
+def test_raw_storage_bytes_that_look_like_opcodes_are_not_reported(tmp_path):
+    raw = _OPCODE_LOOKALIKE + b"\x00" * (-len(_OPCODE_LOOKALIKE) % 4)
+    members = [
+        ("sys_info", pickle.dumps({})),
+        ("pickle", pickle.dumps({"w": 0})),
+        ("storages", _storages_member([raw, np.ones(16, dtype=np.float32).tobytes()])),
+        ("tensors", _tensors_member(2)),
+    ]
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", members))
+    assert result.findings == []
+
+
+@pytest.mark.parametrize("header", [struct.pack("<i", 1000), struct.pack("<i", 2)])  # impossible ndim; truncated
+def test_tensors_member_with_a_bad_header_is_reported_and_still_scanned(tmp_path, header):
+    broken = pickle.dumps(2, protocol=2) + pickle.dumps(("t0", "k0", 0), protocol=2) + header + eval_global()
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", [("tensors", broken)]))
+    codes = {f.code for f in result.findings}
+    assert "malformed_pickle" in codes and "dangerous_import" in codes, result.findings
+
+
+def test_storages_member_that_cannot_be_walked_is_reported_and_still_scanned(tmp_path):
+    broken = pickle.dumps(1, protocol=2) + _storage_descriptor("k0") + struct.pack("<q", 1 << 40) + eval_global()
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", [("storages", broken)]))
+    codes = {f.code for f in result.findings}
+    assert "malformed_pickle" in codes and "dangerous_import" in codes, result.findings
