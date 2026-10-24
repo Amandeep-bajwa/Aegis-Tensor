@@ -10,12 +10,16 @@ import pickle
 
 import numpy as np
 import pytest
-import torch
 from safetensors.numpy import save_file
 from typer.testing import CliRunner
 
+from aegis import TORCH_AVAILABLE
 from aegis.cli import app
 
+if TORCH_AVAILABLE:
+    import torch
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 runner = CliRunner()
 
 
@@ -69,6 +73,7 @@ def test_verdict_levels_and_next_steps(tmp_path, marker):
     assert document["verdict"]["level"] == "critical"
 
 
+@needs_torch
 def test_clean_pickle_suggests_a_safer_format_to_the_owner(tmp_path):
     path = tmp_path / "ok.pt"
     torch.save({"w": torch.randn(8)}, path)
@@ -112,6 +117,7 @@ needs_engines = pytest.mark.skipif(
 )
 
 
+@needs_torch
 @needs_engines
 @pytest.mark.claim("C19")
 def test_engines_fold_into_one_verdict(tmp_path, marker):

@@ -10,12 +10,16 @@ import zipfile
 
 import numpy as np
 import pytest
-import torch
 from typer.testing import CliRunner
 
+from aegis import TORCH_AVAILABLE
 from aegis.cli import app
 from aegis.picklescan import detect_file_format, scan_pickle_file
 
+if TORCH_AVAILABLE:
+    import torch
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 runner = CliRunner()
 
 
@@ -203,6 +207,7 @@ def test_every_global_is_reported_across_a_malformed_region(tmp_path, marker):
     assert "builtins.eval" in result.globals_seen
 
 
+@needs_torch
 def test_legacy_torch_format_is_clean_and_its_storage_tail_is_not_parsed(tmp_path):
     path = tmp_path / "legacy.pt"
     torch.save({"w": torch.randn(64, 64)}, path, _use_new_zipfile_serialization=False)
@@ -295,6 +300,7 @@ def test_zip_with_damaged_central_directory_falls_back_to_local_headers(tmp_path
     assert any("central directory unreadable" in f.message for f in result.findings)
 
 
+@needs_torch
 def test_real_torch_checkpoint_is_clean(tmp_path):
     path = tmp_path / "clean.pt"
     torch.save(torch.nn.Linear(8, 4).state_dict(), path)

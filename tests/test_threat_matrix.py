@@ -14,10 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
-import torch.nn as nn
 from safetensors.numpy import save_file
-from safetensors.torch import load_file
 from typer.testing import CliRunner
 
 from aegis import CORE_AVAILABLE, TORCH_AVAILABLE, scan_safetensors
@@ -25,6 +22,11 @@ from aegis.cli import app
 from aegis.disarm import disarm_file
 from aegis.formatscan import scan_safetensors_header
 from aegis.picklescan import scan_pickle_file
+
+if TORCH_AVAILABLE:
+    import torch
+    import torch.nn as nn
+    from safetensors.torch import load_file
 
 needs_core = pytest.mark.skipif(not CORE_AVAILABLE, reason="aegis_core Rust extension not compiled")
 needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
@@ -76,6 +78,7 @@ def test_t01_structured_lsb_payload_is_pinpointed_and_disarmed(tmp_path):
     assert not _tensors(cleaned)["layer.weight"].is_suspicious
 
 
+@needs_torch
 @pytest.mark.claim("C09", "L01")
 @needs_core
 def test_t02_random_lsb_payload_is_a_documented_blind_spot_and_disarm_removes_it(tmp_path):
@@ -235,19 +238,21 @@ def test_t14_torchscript_is_refused_with_explanation(tmp_path):
 # --- Behavioural threats (sleeper / trigger backdoors) -------------------------
 
 
-class _ThresholdBackdoor(nn.Module):
-    """Dormant trigger: a large input on feature 0 amplifies the hidden layer by 50x."""
+if TORCH_AVAILABLE:
 
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(10, 20)
-        self.fc2 = nn.Linear(20, 2)
+    class _ThresholdBackdoor(nn.Module):
+        """Dormant trigger: a large input on feature 0 amplifies the hidden layer by 50x."""
 
-    def forward(self, x):
-        h = self.fc1(x)
-        if (x[:, 0] > 8.0).any():
-            h = h * 50.0
-        return self.fc2(h)
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(10, 20)
+            self.fc2 = nn.Linear(20, 2)
+
+        def forward(self, x):
+            h = self.fc1(x)
+            if (x[:, 0] > 8.0).any():
+                h = h * 50.0
+            return self.fc2(h)
 
 
 @needs_torch

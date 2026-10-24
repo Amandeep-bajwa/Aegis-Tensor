@@ -3,10 +3,16 @@
 import os
 import pickle
 
-import torch
-import torch.nn as nn
+import pytest
 
+from aegis import TORCH_AVAILABLE
 from aegis.picklescan import scan_pickle_file
+
+if TORCH_AVAILABLE:
+    import torch
+    import torch.nn as nn
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 
 
 class _SystemCall:
@@ -16,6 +22,7 @@ class _SystemCall:
         return (os.system, ("echo aegis-test-payload",))
 
 
+@needs_torch
 def test_clean_state_dict_has_no_findings(tmp_path):
     path = tmp_path / "clean.pt"
     torch.save(nn.Linear(4, 2).state_dict(), path)
