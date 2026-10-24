@@ -108,8 +108,8 @@ fn mantissa_bit_plane_entropy_for(data: &[u8], bit: u32) -> f64 {
     }
 
     let mut packed_bits = vec![0u8; float_count.div_ceil(8)];
-    for (index, chunk) in data.chunks_exact(4).enumerate() {
-        let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (index, chunk) in data.as_chunks::<4>().0.iter().enumerate() {
+        let word = u32::from_le_bytes(*chunk);
         let mantissa_bit = ((word & 0x007F_FFFF) >> bit) & 1;
         packed_bits[index / 8] |= (mantissa_bit as u8) << (index % 8);
     }
@@ -187,14 +187,14 @@ fn calculate_benford_stats(floats: &[f32]) -> BenfordStats {
     let mut sum_absolute_deviations = 0.0;
     let mut chi_square = 0.0;
 
-    for d in 1..=9 {
+    for (d, &count) in digit_counts.iter().enumerate().skip(1) {
         let expected_p = (1.0 + 1.0 / (d as f64)).log10();
-        let observed_p = digit_counts[d] as f64 / valid_count as f64;
+        let observed_p = count as f64 / valid_count as f64;
         let expected_count = expected_p * valid_count as f64;
 
         sum_absolute_deviations += (observed_p - expected_p).abs();
         if expected_count > 0.0 {
-            chi_square += ((digit_counts[d] as f64 - expected_count).powi(2)) / expected_count;
+            chi_square += ((count as f64 - expected_count).powi(2)) / expected_count;
         }
     }
 
@@ -206,20 +206,26 @@ fn calculate_benford_stats(floats: &[f32]) -> BenfordStats {
 }
 
 fn decode_f32_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect()
 }
 
 fn decode_f16_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(2)
-        .map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+    data.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| f16::from_bits(u16::from_le_bytes(*chunk)).to_f32())
         .collect()
 }
 
 fn decode_bf16_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(2)
-        .map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+    data.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| bf16::from_bits(u16::from_le_bytes(*chunk)).to_f32())
         .collect()
 }
 
@@ -829,9 +835,11 @@ mod tests {
     /// Small-magnitude float32 values that look like trained weights (uniform in +-0.02).
     fn weight_like_f32(count: usize, seed: u64) -> Vec<u8> {
         pseudo_random_bytes(count * 4, seed)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|c| {
-                let unit = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64 / u32::MAX as f64;
+                let unit = u32::from_le_bytes(*c) as f64 / u32::MAX as f64;
                 ((unit * 2.0 - 1.0) as f32 * 0.02).to_le_bytes()
             })
             .collect()
@@ -872,11 +880,11 @@ mod tests {
 
         let mut text_bits = weights.clone();
         let payload = b"connect 10.0.0.5:4444 /bin/sh ".repeat(2000);
-        for (index, chunk) in text_bits.chunks_exact_mut(4).enumerate() {
-            let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        for (index, chunk) in text_bits.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let word = u32::from_le_bytes(*chunk);
             let byte = payload[(index / 8) % payload.len()];
             let bit = ((byte >> (index % 8)) & 1) as u32;
-            chunk.copy_from_slice(&((word & !1) | bit).to_le_bytes());
+            *chunk = ((word & !1) | bit).to_le_bytes();
         }
         let structured_plane = plane_entropy(&text_bits, 4, 0);
         assert!(
@@ -888,8 +896,7 @@ mod tests {
 
     #[test]
     fn test_constant_tensor_is_not_diverse() {
-        let ones: Vec<u8> = std::iter::repeat(1.0f32.to_le_bytes())
-            .take(40_000)
+        let ones: Vec<u8> = std::iter::repeat_n(1.0f32.to_le_bytes(), 40_000)
             .flatten()
             .collect();
         assert!(!has_diverse_values(&ones, 4));
@@ -901,9 +908,11 @@ mod tests {
     fn test_zeroed_low_bits_are_a_constant_plane_not_a_payload() {
         // Upcast low-precision weights, or bits zeroed by disarming, have constant low planes.
         let masked: Vec<u8> = weight_like_f32(50_000, 11)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|c| {
-                let word = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & !0xFFu32;
+                let word = u32::from_le_bytes(*c) & !0xFFu32;
                 word.to_le_bytes()
             })
             .collect();

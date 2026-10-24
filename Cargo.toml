@@ -2,6 +2,7 @@
 name = "aegis_core"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"  # slice::as_chunks
 description = "High-performance Rust static scanner for Aegis-Tensor"
 license = "Apache-2.0"
 
