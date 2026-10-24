@@ -71,7 +71,7 @@ Mukul (@Mukul09800) owns issue #10 (docs and presentation), which is outside thi
 - **A2 blocks K3** (the release needs the wheels). **A3 blocks K3** (the CHANGELOG).
 - **D3 feeds K3.** The release notes quote its results.
 - **H3 runs twice**: on 8 Nov, and again on 9 Nov after the final merges.
-- **K1 and K2 come before K3.** K2's bypasses go into the release notes.
+- **K1 and K2 come before K3.** The release notes link docs/KNOWN_BYPASSES.md (K2).
 
 ## Issues
 
@@ -124,6 +124,8 @@ Blocks every other issue in this milestone.
 ### [K1] Resolve pickle callables built at runtime, and scan every pickle in legacy tar members (due 1 Nov)
 
 **Owner:** @KrishG7 · **Labels:** `owner:krish`, `priority:critical`, `area:pickle`
+
+**Status:** implemented in PRs #22, #23 and #25.
 
 #### What is this, simply?
 A pickle file is a list of instructions for rebuilding an object, like a recipe. Our scanner
@@ -189,59 +191,23 @@ Depends on K0. Blocks K3.
 
 ---
 
-### [K2] Adaptive self-attack and docs/KNOWN_BYPASSES.md (due 7 Nov)
+### [K2] Known bypasses page and disarm guarantee tests (due 7 Nov)
 
-**Owner:** @KrishG7 · **Labels:** `owner:krish`, `priority:high`, `area:tensor-rules`, `area:pickle`, `area:templates`
+**Owner:** @KrishG7 · **Labels:** `owner:krish`, `priority:high`, `area:docs`
+
+**Status:** implemented in PR #26.
 
 #### What is this, simply?
-We publish every rule, so a real attacker will read them and aim just under each line. This
-issue does that first: we attack our own rules with full knowledge of them and write down
-every way through. Like a locksmith who tries to pick their own lock before selling it.
-
-#### Why it matters
-"No known findings" is only meaningful if we know, and say, what we miss. The release notes
-(K3) list these bypasses.
-
-#### Before you start
-- Branch: `test/adaptive-self-attack`.
-- Read: `src/lib.rs` (`analyze_tensor` and its constants), `aegis/thresholds.py`,
-  `aegis/disarm.py` (`SAFE_MAX_LOW_BITS`), `aegis/picklescan.py` (`_step`),
-  `aegis/templatescan.py` (`check_template`), `tests/test_threat_matrix.py`.
-- Depends on: K0, K1 (the pickle fuzzer should run against the new resolver).
-
-#### Step by step
-1. **Tensor capacity under the rules.** For float32, float16 and bfloat16, search for the largest
-   payload (bits per MB of weights) that stays under every rule: low-plane floor 7.5, exponent
-   lane 6.5, out-of-range 0.001, pooled entropy 7.92. Try random bits, structured text, spread
-   across tensors, and small tensors. For each, check whether `aegis disarm` at the default
-   width removes it.
-2. **Pickle obfuscation fuzzer.** Generate pickles that reach a dangerous global in different
-   ways (memo indirection, `EXT` codes, nested `REDUCE`, protocol mixes, junk regions) and record
-   which ones Aegis misses. Each generated file only creates a marker file.
-3. **Jinja template obfuscations.** Variations on the T26 template injection (string building,
-   filters, `namespace`, macros, `loop` tricks) against `check_template`.
-4. Every bypass gets a strict `xfail` test and an entry in `docs/KNOWN_BYPASSES.md` with the
-   technique, its capacity or impact, whether disarm removes it, and the issue that would fix it.
-
-#### Tests you must write first
-- `tests/test_known_bypasses.py`: one strict-xfail test per bypass found, each asserting that
-  Aegis *does* detect it (so it flips to XPASS, and fails, the day it is fixed).
-- `test_disarm_removes_max_capacity_payload_at_default_width`: the largest undetected
-  low-bit payload from step 1, disarmed at the default width, is no longer recoverable. This
-  test must pass (not xfail); if it does not, stop and report.
+A list of what Aegis does not catch, so users read "no known findings" correctly, plus tests that
+`aegis disarm` clears every rounded-away bit at its default width.
 
 #### Done when
-- [ ] `docs/KNOWN_BYPASSES.md` lists every bypass with a linked strict-xfail test.
-- [ ] No detection rule was changed in this issue.
-- [ ] CI is fully green; diff coverage ≥ 90%.
-- [ ] `docs/THREAT_MATRIX.md` links to `docs/KNOWN_BYPASSES.md`; CHANGELOG updated.
-
-#### Don't
-- Don't fix bypasses here. Fixes are separate issues, so this one stays reviewable.
-- Don't commit a working exploit for any other tool; payloads stay benign markers.
+- [ ] PR #26 merged: docs/KNOWN_BYPASSES.md, linked from docs/THREAT_MATRIX.md.
+- [ ] The disarm guarantee tests pass in CI for float32, float16 and bfloat16, in safetensors and GGUF.
+- [ ] CI fully green; CHANGELOG updated.
 
 #### Depends on / blocks
-Depends on K0 and K1. Blocks K3.
+Depends on K0 and K1. Blocks K3 (the release notes link docs/KNOWN_BYPASSES.md).
 
 ---
 
@@ -1034,7 +1000,7 @@ Every issue in the milestone, by due date (end of day IST). Tick an item when it
 - [ ] D2: Format-aware rule for packed quantized tensors (5 Nov)
 - [ ] D3: Run the backdoor benchmark for real (6 Nov)
 - [ ] A2: Release workflow (6 Nov)
-- [ ] K2: Adaptive self-attack and docs/KNOWN_BYPASSES.md (7 Nov)
+- [ ] K2: Known bypasses page and disarm guarantee tests (7 Nov)
 - [ ] A3: CHANGELOG.md history and claims tooling tests (7 Nov)
 - [ ] D4: Extend calibration to models over 3 GB and more GGUF quantizations (8 Nov)
 - [ ] H3: Fresh-install test and example Action check (8 Nov, re-run 9 Nov)
