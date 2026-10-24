@@ -25,7 +25,7 @@ import shutil
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -56,7 +56,7 @@ _GGUF_DTYPES = {0: "float32", 1: "float16", 30: "bfloat16"}
 
 
 def dtype_name(dtype) -> str:
-    """"float32" for torch.float32, "float32", "F32"; unknown dtypes are returned as text."""
+    """ "float32" for torch.float32, "float32", "F32"; unknown dtypes are returned as text."""
     text = str(dtype).replace("torch.", "")
     return _SAFETENSORS_DTYPES.get(text, text)
 
@@ -67,10 +67,10 @@ class DisarmReport:
     tensors_skipped: int
     low_bits: int
     max_relative_change: float
-    effective_low_bits: Dict[str, int] = field(default_factory=dict)
-    warnings: List[str] = field(default_factory=list)
+    effective_low_bits: dict[str, int] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
     format: str = "safetensors"
-    untreated: Dict[str, int] = field(default_factory=dict)  # dtype -> tensors that could not be rounded
+    untreated: dict[str, int] = field(default_factory=dict)  # dtype -> tensors that could not be rounded
 
 
 def max_relative_change(dtype, low_bits: int) -> float:
@@ -105,6 +105,7 @@ def default_width(dtype, requested: int = DEFAULT_LOW_BITS) -> int:
 
 
 # --- Bit rounding ------------------------------------------------------------------
+
 
 def round_bits(bits: np.ndarray, dtype, low_bits: int) -> np.ndarray:
     """Round raw float bit patterns to nearest with the lowest ``low_bits`` mantissa bits cleared.
@@ -189,6 +190,7 @@ class _Treatment:
 
 # --- In-memory (torch) -------------------------------------------------------------
 
+
 def _torch_bits(tensor):
     import torch
 
@@ -211,8 +213,9 @@ def disarm_tensor(tensor, low_bits: int):
     return _from_bits(round_bits(_torch_bits(tensor), tensor.dtype, low_bits), tensor)
 
 
-def disarm_state(tensors: Dict[str, Any], low_bits: int = DEFAULT_LOW_BITS,
-                 allow_unsafe: bool = False) -> Tuple[Dict[str, Any], DisarmReport]:
+def disarm_state(
+    tensors: dict[str, Any], low_bits: int = DEFAULT_LOW_BITS, allow_unsafe: bool = False
+) -> tuple[dict[str, Any], DisarmReport]:
     """Disarm every float tensor in a torch state dict, applying a per-dtype effective width."""
     treatment = _Treatment(low_bits, allow_unsafe, "state_dict")
     out = {}
@@ -227,15 +230,16 @@ def disarm_state(tensors: Dict[str, Any], low_bits: int = DEFAULT_LOW_BITS,
 
 # --- Files -------------------------------------------------------------------------
 
-def default_disarm_path(source: Union[str, Path]) -> Path:
+
+def default_disarm_path(source: str | Path) -> Path:
     """model.safetensors -> model.disarmed.safetensors, next to the input."""
     source = Path(source)
     return source.with_name(f"{source.stem}.disarmed{source.suffix}")
 
 
 def disarm_file(
-    source: Union[str, Path],
-    destination: Union[str, Path],
+    source: str | Path,
+    destination: str | Path,
     low_bits: int = DEFAULT_LOW_BITS,
     strip_metadata: bool = False,
     allow_unsafe: bool = False,
@@ -267,7 +271,7 @@ def _disarm_safetensors(source: Path, destination: Path, strip_metadata: bool, t
             raise ValueError("not a safetensors file: too short")
         (header_len,) = struct.unpack("<Q", data[:8])
         try:
-            header = json.loads(bytes(data[8:8 + header_len]))
+            header = json.loads(bytes(data[8 : 8 + header_len]))
         except (ValueError, UnicodeDecodeError) as error:
             raise ValueError(f"not a safetensors file: {error}") from error
         body = 8 + header_len
@@ -275,8 +279,10 @@ def _disarm_safetensors(source: Path, destination: Path, strip_metadata: bool, t
             header.pop("__metadata__", None)
         blob = json.dumps(header, separators=(",", ":")).encode()
         blob += b" " * ((-len(blob)) % 8)
-        tensors = sorted(((name, info) for name, info in header.items() if name != "__metadata__"),
-                         key=lambda item: item[1]["data_offsets"][0])
+        tensors = sorted(
+            ((name, info) for name, info in header.items() if name != "__metadata__"),
+            key=lambda item: item[1]["data_offsets"][0],
+        )
         with open(destination, "wb") as out:
             out.write(struct.pack("<Q", len(blob)) + blob)
             position = 0
@@ -284,7 +290,7 @@ def _disarm_safetensors(source: Path, destination: Path, strip_metadata: bool, t
                 start, end = info["data_offsets"]
                 if start != position or body + end > len(data):
                     raise ValueError(f"tensor {name}: data offsets are not contiguous or run past the end")
-                raw = data[body + start:body + end]
+                raw = data[body + start : body + end]
                 dtype = _SAFETENSORS_DTYPES.get(info["dtype"])
                 if dtype is None:
                     out.write(raw)

@@ -5,7 +5,6 @@ Only a masked form of the secret ever appears in output.
 """
 
 import re
-from typing import List, Tuple
 
 PATTERNS = [
     ("Hugging Face token", re.compile(r"\bhf_[A-Za-z0-9]{30,}\b")),
@@ -23,7 +22,7 @@ def mask(secret: str) -> str:
     return secret[:6] + "…" + secret[-4:] if len(secret) > 14 else secret[:4] + "…"
 
 
-def find_secrets(text: str) -> List[Tuple[str, str]]:
+def find_secrets(text: str) -> list[tuple[str, str]]:
     """[(kind, masked value)] for each credential-like string in ``text``."""
     found, seen = [], set()
     for kind, pattern in PATTERNS:

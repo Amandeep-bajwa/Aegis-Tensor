@@ -1,8 +1,10 @@
 """Tests for Dynamic Fuzzing Engine in aegis/fuzzer.py."""
 
-import pytest
 from dataclasses import dataclass
-from aegis import TORCH_AVAILABLE, DynamicTrojanFuzzer, ActivationHookManager
+
+import pytest
+
+from aegis import TORCH_AVAILABLE, ActivationHookManager, DynamicTrojanFuzzer
 
 if TORCH_AVAILABLE:
     import torch
@@ -156,8 +158,8 @@ def test_patch_triggers_stamp_checkerboard():
     assert tags == ["patch_bottom_right_8x8", "patch_top_left_8x8", "patch_center_8x8"]
     x = dict(cases)["patch_bottom_right_8x8"]
     patch = x[0, 0, 24:, 24:]
-    assert patch.abs().min() == 1.0          # every pixel in the patch is set
-    assert patch[0, 0] == -patch[0, 1]       # alternating contrast
+    assert patch.abs().min() == 1.0  # every pixel in the patch is set
+    assert patch[0, 0] == -patch[0, 1]  # alternating contrast
     assert x[0, 0, :24, :].abs().sum() == 0  # rest of the image untouched
     with pytest.raises(ValueError):
         generate_patch_triggers((10,))
@@ -279,10 +281,10 @@ def test_isolation_localizes_trigger_layer_and_input():
         seed=0,
     )
     assert report.suspected_trojan
-    top = report.layer_anomalies[0]            # sorted strongest first
+    top = report.layer_anomalies[0]  # sorted strongest first
     assert top.layer_name == "layer2"
     assert top.region == "head" and top.depth == "late"
-    assert top.trigger_iteration == 6          # i == 5 -> iteration 6
+    assert top.trigger_iteration == 6  # i == 5 -> iteration 6
     assert top.spike_ratio >= 4.0 and top.z_score > 3.0
     assert "layer2" in report.anomaly_regions["head"]
     assert report.spike_ratio == top.spike_ratio

@@ -11,7 +11,6 @@ import json
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Union
 
 from aegis.secrets import find_secrets
 
@@ -26,8 +25,8 @@ MAX_TENSOR_NAME_BYTES = 256
 @dataclass
 class FormatFinding:
     severity: str  # SUSPICIOUS
-    channel: str   # metadata | header_whitespace | tensor_name
-    where: str     # pinpoints the key, tensor or byte count
+    channel: str  # metadata | header_whitespace | tensor_name
+    where: str  # pinpoints the key, tensor or byte count
     message: str
     treatment: str  # sanitize (strip metadata or rewrite header) | quarantine
 
@@ -36,14 +35,14 @@ class FormatFinding:
 class FormatScanResult:
     path: str
     header_bytes: int = 0
-    findings: List[FormatFinding] = field(default_factory=list)
+    findings: list[FormatFinding] = field(default_factory=list)
 
     @property
     def is_suspicious(self) -> bool:
         return bool(self.findings)
 
 
-def scan_safetensors_header(path: Union[str, Path]) -> FormatScanResult:
+def scan_safetensors_header(path: str | Path) -> FormatScanResult:
     """Check the safetensors header for data hidden outside the tensor bytes."""
     path = Path(path)
     result = FormatScanResult(path=str(path))
@@ -64,25 +63,37 @@ def scan_safetensors_header(path: Union[str, Path]) -> FormatScanResult:
         size = len(str(value).encode("utf-8"))
         total += size
         if size > MAX_METADATA_VALUE_BYTES:
-            result.findings.append(FormatFinding(
-                "SUSPICIOUS", "metadata", f"__metadata__['{key}']",
-                f"metadata value is {size} bytes (limit {MAX_METADATA_VALUE_BYTES}) - possible hidden payload",
-                "sanitize",
-            ))
+            result.findings.append(
+                FormatFinding(
+                    "SUSPICIOUS",
+                    "metadata",
+                    f"__metadata__['{key}']",
+                    f"metadata value is {size} bytes (limit {MAX_METADATA_VALUE_BYTES}) - possible hidden payload",
+                    "sanitize",
+                )
+            )
     if total > MAX_METADATA_TOTAL_BYTES and not any(f.channel == "metadata" for f in result.findings):
-        result.findings.append(FormatFinding(
-            "SUSPICIOUS", "metadata", "__metadata__",
-            f"metadata totals {total} bytes (limit {MAX_METADATA_TOTAL_BYTES})",
-            "sanitize",
-        ))
+        result.findings.append(
+            FormatFinding(
+                "SUSPICIOUS",
+                "metadata",
+                "__metadata__",
+                f"metadata totals {total} bytes (limit {MAX_METADATA_TOTAL_BYTES})",
+                "sanitize",
+            )
+        )
 
     for key, value in metadata.items():
         for kind, masked in find_secrets(str(value)):
-            result.findings.append(FormatFinding(
-                "SUSPICIOUS", "secret", f"__metadata__['{key}']",
-                f"{kind} in metadata ({masked}) - leaked credential; tell the owner privately and have it revoked",
-                "sanitize",
-            ))
+            result.findings.append(
+                FormatFinding(
+                    "SUSPICIOUS",
+                    "secret",
+                    f"__metadata__['{key}']",
+                    f"{kind} in metadata ({masked}) - leaked credential; tell the owner privately and have it revoked",
+                    "sanitize",
+                )
+            )
 
     # The canonical header has no whitespace. Any extra bytes are unexplained padding.
     # Re-serialise the parsed header as written, including an empty __metadata__ block.
@@ -90,18 +101,26 @@ def scan_safetensors_header(path: Union[str, Path]) -> FormatScanResult:
     canonical = json.dumps(full, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     slack = header_len - len(canonical)
     if slack > MAX_HEADER_SLACK_BYTES:
-        result.findings.append(FormatFinding(
-            "SUSPICIOUS", "header_whitespace", "header",
-            f"{slack} bytes of unexplained whitespace or padding in the JSON header - a bit-level channel",
-            "sanitize",
-        ))
+        result.findings.append(
+            FormatFinding(
+                "SUSPICIOUS",
+                "header_whitespace",
+                "header",
+                f"{slack} bytes of unexplained whitespace or padding in the JSON header - a bit-level channel",
+                "sanitize",
+            )
+        )
 
     for name in header:
         size = len(name.encode("utf-8"))
         if size > MAX_TENSOR_NAME_BYTES:
-            result.findings.append(FormatFinding(
-                "SUSPICIOUS", "tensor_name", name[:40] + "...",
-                f"tensor name is {size} bytes (limit {MAX_TENSOR_NAME_BYTES}) - possible hidden payload",
-                "quarantine",
-            ))
+            result.findings.append(
+                FormatFinding(
+                    "SUSPICIOUS",
+                    "tensor_name",
+                    name[:40] + "...",
+                    f"tensor name is {size} bytes (limit {MAX_TENSOR_NAME_BYTES}) - possible hidden payload",
+                    "quarantine",
+                )
+            )
     return result

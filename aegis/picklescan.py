@@ -24,21 +24,53 @@ import struct
 import tarfile
 import zipfile
 import zlib
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple, Union
 
 # Modules whose import alone means arbitrary code execution or system access.
-DANGEROUS_MODULES = frozenset({
-    "os", "posix", "nt", "subprocess", "sys", "socket", "shutil", "pty", "runpy",
-    "importlib", "ctypes", "multiprocessing", "pickle", "_pickle", "code", "codeop",
-    "commands", "webbrowser", "tempfile", "http", "urllib", "requests", "asyncio",
-})
+DANGEROUS_MODULES = frozenset(
+    {
+        "os",
+        "posix",
+        "nt",
+        "subprocess",
+        "sys",
+        "socket",
+        "shutil",
+        "pty",
+        "runpy",
+        "importlib",
+        "ctypes",
+        "multiprocessing",
+        "pickle",
+        "_pickle",
+        "code",
+        "codeop",
+        "commands",
+        "webbrowser",
+        "tempfile",
+        "http",
+        "urllib",
+        "requests",
+        "asyncio",
+    }
+)
 # Builtins that run code or reach into the interpreter.
-DANGEROUS_BUILTINS = frozenset({
-    "eval", "exec", "compile", "__import__", "getattr", "setattr", "delattr",
-    "open", "breakpoint", "input",
-})
+DANGEROUS_BUILTINS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "open",
+        "breakpoint",
+        "input",
+    }
+)
 # Modules that legitimate tensor checkpoints reference. Older pickle protocols
 # name the builtins module `__builtin__`, so both spellings are treated alike.
 BUILTIN_MODULES = frozenset({"builtins", "__builtin__"})
@@ -57,18 +89,23 @@ MAX_7Z_UNPACKED_BYTES = 2 << 30
 # Unknown files get a best-effort opcode scan of this many leading bytes.
 BEST_EFFORT_BYTES = 1 << 20
 
-STRING_OPS = frozenset({
-    "STRING", "BINSTRING", "SHORT_BINSTRING", "UNICODE", "BINUNICODE",
-    "SHORT_BINUNICODE", "BINUNICODE8",
-})
+STRING_OPS = frozenset(
+    {
+        "STRING",
+        "BINSTRING",
+        "SHORT_BINSTRING",
+        "UNICODE",
+        "BINUNICODE",
+        "SHORT_BINUNICODE",
+        "BINUNICODE8",
+    }
+)
 # Only names that are valid dotted identifiers can be imported. Bytes read while
 # resynchronising after a malformed region often look like GLOBAL opcodes with
 # garbage operands; those cannot execute anything and are not reported.
 _IMPORTABLE = re.compile(r"^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$")
 # Protocol 0 and 1 pickles have no PROTO header; they start with one of these opcodes.
-_PROTO01_FIRST_BYTES = frozenset(
-    op.code.encode("latin-1") for op in pickletools.opcodes if op.proto <= 1
-)
+_PROTO01_FIRST_BYTES = frozenset(op.code.encode("latin-1") for op in pickletools.opcodes if op.proto <= 1)
 
 
 @dataclass
@@ -86,11 +123,11 @@ class PickleFinding:
 class PickleScanResult:
     path: str
     format: str = "unknown"
-    findings: List[PickleFinding] = field(default_factory=list)
-    globals_seen: List[str] = field(default_factory=list)
+    findings: list[PickleFinding] = field(default_factory=list)
+    globals_seen: list[str] = field(default_factory=list)
     # When a list, every pickle stream found is copied here as (location, bytes), for the
     # optional engines in aegis/engines.py. None (the default) keeps nothing.
-    streams: Optional[List[Tuple[str, bytes]]] = field(default=None, repr=False, compare=False)
+    streams: list[tuple[str, bytes]] | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_suspicious(self) -> bool:
@@ -108,7 +145,8 @@ class PickleScanResult:
 
 # --- Format detection ----------------------------------------------------------
 
-def detect_format(data: Union[bytes, mmap.mmap], total_size: Optional[int] = None) -> str:
+
+def detect_format(data: bytes | mmap.mmap, total_size: int | None = None) -> str:
     """Identify a model container by its leading bytes. Never trusts the extension.
 
     ``total_size`` is the full file size when ``data`` is only the file's prefix.
@@ -146,7 +184,8 @@ def _parses_as_pickle(data: bytes) -> bool:
 
 # --- Global classification -------------------------------------------------------
 
-def _classify(module: str, name: str) -> Tuple[str, str]:
+
+def _classify(module: str, name: str) -> tuple[str, str]:
     """Return (severity, message) for an imported global, or ("", "") if it is allowed."""
     if module in DANGEROUS_MODULES or module.split(".")[0] in DANGEROUS_MODULES:
         return "CRITICAL", f"imports {module}.{name} (code execution or system access)"
@@ -217,7 +256,12 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
             )
         stack.append(_UNKNOWN)
     elif name.startswith("EXT"):
-        result.add("SUSPICIOUS", f"{name} resolves a global through the copyreg extension registry", where, code="extension_registry")
+        result.add(
+            "SUSPICIOUS",
+            f"{name} resolves a global through the copyreg extension registry",
+            where,
+            code="extension_registry",
+        )
         stack.append(_UNKNOWN)
     else:
         before = op.stack_before
@@ -233,10 +277,10 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
 
 
 def _scan_pickle_stream(
-    data: Union[bytes, mmap.mmap],
+    data: bytes | mmap.mmap,
     result: PickleScanResult,
     location: str,
-    max_pickles: Optional[int] = None,
+    max_pickles: int | None = None,
     report_malformed: bool = True,
     best_effort: bool = False,
 ) -> int:
@@ -287,7 +331,12 @@ def _scan_pickle_stream(
             resyncs += 1
             if resyncs > MAX_RESYNCS:
                 if not best_effort:
-                    result.add("SUSPICIOUS", "too many malformed regions; scan stopped early", location, code="malformed_pickle")
+                    result.add(
+                        "SUSPICIOUS",
+                        "too many malformed regions; scan stopped early",
+                        location,
+                        code="malformed_pickle",
+                    )
                 break
             pos = max(pos + 1, last_offset + 1)
             report_malformed = False  # one report per stream; later errors are resync noise
@@ -296,7 +345,7 @@ def _scan_pickle_stream(
 
 def _keep_stream(result: PickleScanResult, location: str, data, start: int, end: int, best_effort: bool) -> None:
     if result.streams is not None and not best_effort and len(result.streams) < MAX_KEPT_STREAMS:
-        result.streams.append((location, bytes(data[start:min(end, start + MAX_KEPT_STREAM_BYTES)])))
+        result.streams.append((location, bytes(data[start : min(end, start + MAX_KEPT_STREAM_BYTES)])))
 
 
 def _is_legacy_torch(data: bytes) -> bool:
@@ -313,14 +362,15 @@ def _is_legacy_torch(data: bytes) -> bool:
 
 # --- Containers ----------------------------------------------------------------
 
+
 def _read_local_entry(data, header_offset: int, method: int, compressed_size: int) -> bytes:
     """Read a zip entry from its local header, ignoring flag bits and CRC like miniz does."""
-    header = bytes(data[header_offset:header_offset + 30])
+    header = bytes(data[header_offset : header_offset + 30])
     if header[:4] != b"PK\x03\x04":
         raise ValueError("local file header signature missing")
     name_len, extra_len = struct.unpack("<HH", header[26:30])
     start = header_offset + 30 + name_len + extra_len
-    raw = bytes(data[start:start + compressed_size])
+    raw = bytes(data[start : start + compressed_size])
     if method == zipfile.ZIP_STORED:
         return raw
     if method == zipfile.ZIP_DEFLATED:
@@ -328,11 +378,16 @@ def _read_local_entry(data, header_offset: int, method: int, compressed_size: in
     raise ValueError(f"unsupported compression method {method}")
 
 
-def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[Tuple[str, bytes]]:
+def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[tuple[str, bytes]]:
     try:
         infos = zipfile.ZipFile(io.BytesIO(data) if isinstance(data, bytes) else data).infolist()
     except (zipfile.BadZipFile, OSError, ValueError) as error:
-        result.add("SUSPICIOUS", f"zip central directory unreadable ({error}); read local headers instead", label, code="zip_tampered")
+        result.add(
+            "SUSPICIOUS",
+            f"zip central directory unreadable ({error}); read local headers instead",
+            label,
+            code="zip_tampered",
+        )
         yield from _zip_local_headers(data, result, label)
         return
     for info in infos:
@@ -350,21 +405,23 @@ def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[Tuple[s
                 code="zip_tampered",
             )
         if zlib.crc32(payload) & 0xFFFFFFFF != info.CRC:
-            result.add("SUSPICIOUS", "zip entry CRC does not match its contents (tampered archive)", where, code="zip_tampered")
+            result.add(
+                "SUSPICIOUS", "zip entry CRC does not match its contents (tampered archive)", where, code="zip_tampered"
+            )
         yield info.filename, payload
 
 
-def _zip_local_headers(data, result: PickleScanResult, label: str) -> Iterator[Tuple[str, bytes]]:
+def _zip_local_headers(data, result: PickleScanResult, label: str) -> Iterator[tuple[str, bytes]]:
     """Fallback when the central directory is damaged: walk local file headers."""
     blob = bytes(data)
     for match in re.finditer(rb"PK\x03\x04", blob):
         start = match.start()
         if start + 30 > len(blob):
             continue
-        flags, method = struct.unpack("<HH", blob[start + 6:start + 10])
-        csize, _ = struct.unpack("<II", blob[start + 18:start + 26])
-        name_len, extra_len = struct.unpack("<HH", blob[start + 26:start + 30])
-        name = blob[start + 30:start + 30 + name_len].decode("utf-8", "replace")
+        flags, method = struct.unpack("<HH", blob[start + 6 : start + 10])
+        csize, _ = struct.unpack("<II", blob[start + 18 : start + 26])
+        name_len, extra_len = struct.unpack("<HH", blob[start + 26 : start + 30])
+        name = blob[start + 30 : start + 30 + name_len].decode("utf-8", "replace")
         body = start + 30 + name_len + extra_len
         if csize == 0 and flags & 0x8:
             nxt = re.search(rb"PK\x03\x04|PK\x01\x02", blob[body:])
@@ -434,7 +491,9 @@ def _scan_7z(data, result: PickleScanResult, label: str, depth: int) -> None:
         with py7zr.SevenZipFile(io.BytesIO(bytes(data)), mode="r") as archive:
             unpacked = sum(f.uncompressed or 0 for f in archive.list())
             if unpacked > MAX_7Z_UNPACKED_BYTES:
-                result.add("SUSPICIOUS", f"7z archive unpacks to {unpacked} bytes; not inspected", label, code="archive_7z")
+                result.add(
+                    "SUSPICIOUS", f"7z archive unpacks to {unpacked} bytes; not inspected", label, code="archive_7z"
+                )
                 return
             entries = _read_7z(archive)
     except Exception as error:
@@ -470,14 +529,14 @@ def _scan_npy(data, result: PickleScanResult, label: str) -> None:
         else:
             (header_len,) = struct.unpack("<I", blob[8:12])
             start = 12
-        header = ast.literal_eval(blob[start:start + header_len].decode("latin-1"))
+        header = ast.literal_eval(blob[start : start + header_len].decode("latin-1"))
         descr = str(header.get("descr", ""))
     except Exception as error:
         result.add("SUSPICIOUS", f"malformed .npy header ({error})", label, code="malformed_npy")
         return
     if "O" in descr:
         result.add("SUSPICIOUS", "object-dtype numpy array: loading it requires unpickling", label, code="npy_object")
-        _scan_pickle_stream(blob[start + header_len:], result, f"{label}[object data]")
+        _scan_pickle_stream(blob[start + header_len :], result, f"{label}[object data]")
 
 
 def _scan_bytes(data, result: PickleScanResult, label: str, depth: int, report_unknown: bool = True) -> bool:
@@ -520,7 +579,7 @@ def _scan_bytes(data, result: PickleScanResult, label: str, depth: int, report_u
     return False
 
 
-def detect_file_format(path: Union[str, Path]) -> str:
+def detect_file_format(path: str | Path) -> str:
     """Format of the file at ``path``, read from its first 64 KiB and its size."""
     path = Path(path)
     size = path.stat().st_size
@@ -529,7 +588,7 @@ def detect_file_format(path: Union[str, Path]) -> str:
     return detect_format(prefix, total_size=size) if prefix else "unknown"
 
 
-def scan_pickle_file(path: Union[str, Path], keep_streams: bool = False) -> PickleScanResult:
+def scan_pickle_file(path: str | Path, keep_streams: bool = False) -> PickleScanResult:
     """Scan a model file without loading it. The format is taken from its bytes.
 
     ``keep_streams`` copies each pickle stream into ``result.streams`` for the optional engines.

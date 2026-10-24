@@ -14,12 +14,12 @@ Nothing is executed and no model is loaded through its framework:
 
 import io
 import json
-import os
 import struct
 import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any
 
 from aegis.picklescan import PickleScanResult
 
@@ -39,10 +39,10 @@ _ONNX_STANDARD_DOMAINS = {"", "ai.onnx", "ai.onnx.ml", "ai.onnx.preview.training
 class ModelFormatResult(PickleScanResult):
     """Container-style findings plus per-tensor statistics."""
 
-    tensor_results: List[Any] = field(default_factory=list)
+    tensor_results: list[Any] = field(default_factory=list)
 
 
-def sniff_format(path: Union[str, Path]) -> Optional[str]:
+def sniff_format(path: str | Path) -> str | None:
     """'gguf', 'hdf5', 'keras' or 'onnx' when the file is one of these formats, else None."""
     path = Path(path)
     with open(path, "rb") as handle:
@@ -65,23 +65,32 @@ def sniff_format(path: Union[str, Path]) -> Optional[str]:
     return None
 
 
-def scan_model_format(path: Union[str, Path], fmt: str, thresholds: Dict[str, Any]) -> ModelFormatResult:
+def scan_model_format(path: str | Path, fmt: str, thresholds: dict[str, Any]) -> ModelFormatResult:
     path = Path(path)
     result = ModelFormatResult(path=str(path), format=fmt)
     {"gguf": _scan_gguf, "hdf5": _scan_hdf5, "keras": _scan_keras, "onnx": _scan_onnx}[fmt](path, result, thresholds)
     return result
 
 
-def _tensor_stats(result: ModelFormatResult, name: str, dtype: str, shape: List[int], data: bytes,
-                  thresholds: Dict[str, Any]) -> None:
+def _tensor_stats(
+    result: ModelFormatResult, name: str, dtype: str, shape: list[int], data: bytes, thresholds: dict[str, Any]
+) -> None:
     from aegis import scan_tensor_bytes
 
     if scan_tensor_bytes is None:
         return
-    result.tensor_results.append(scan_tensor_bytes(
-        name, dtype, list(shape), data, thresholds["entropy"], thresholds["benford"],
-        thresholds["exponent"], thresholds["plane"],
-    ))
+    result.tensor_results.append(
+        scan_tensor_bytes(
+            name,
+            dtype,
+            list(shape),
+            data,
+            thresholds["entropy"],
+            thresholds["benford"],
+            thresholds["exponent"],
+            thresholds["plane"],
+        )
+    )
 
 
 def _check_template(text: str, result: ModelFormatResult, where: str) -> None:
@@ -89,23 +98,32 @@ def _check_template(text: str, result: ModelFormatResult, where: str) -> None:
 
     for code, message in check_template(text):
         if code == "injection":
-            result.add("CRITICAL", f"chat template: {message}. An unsandboxed Jinja loader would run code "
-                       "(CVE-2024-34359)", where, code="gguf_template")
+            result.add(
+                "CRITICAL",
+                f"chat template: {message}. An unsandboxed Jinja loader would run code (CVE-2024-34359)",
+                where,
+                code="gguf_template",
+            )
         else:
             result.add("SUSPICIOUS", f"chat template: {message}", where, code="gguf_template_unverifiable")
 
 
-def _check_secrets(metadata: Dict[str, Any], result: ModelFormatResult, label: str) -> None:
+def _check_secrets(metadata: dict[str, Any], result: ModelFormatResult, label: str) -> None:
     from aegis.secrets import find_secrets
 
     for key, value in metadata.items():
         if isinstance(value, str):
             for kind, masked in find_secrets(value):
-                result.add("SUSPICIOUS", f"{kind} in metadata ({masked}) - leaked credential; tell the owner "
-                           "privately and have it revoked", f"{label}:{key}", code="secret")
+                result.add(
+                    "SUSPICIOUS",
+                    f"{kind} in metadata ({masked}) - leaked credential; tell the owner privately and have it revoked",
+                    f"{label}:{key}",
+                    code="secret",
+                )
 
 
 # --- GGUF -------------------------------------------------------------------------
+
 
 class _Reader:
     def __init__(self, data):
@@ -123,7 +141,7 @@ class _Reader:
         length = self.take("<Q")
         if self.pos + length > len(self.data):
             raise ValueError(f"string of {length} bytes runs past the end of the file")
-        raw = bytes(self.data[self.pos:self.pos + length])
+        raw = bytes(self.data[self.pos : self.pos + length])
         self.pos += length
         return raw.decode("utf-8", "replace")
 
@@ -144,7 +162,7 @@ class _Reader:
         raise ValueError(f"unknown GGUF value type {kind}")
 
 
-def parse_gguf_header(data) -> Tuple[Dict[str, Any], List[Tuple[str, List[int], int, int]], int]:
+def parse_gguf_header(data) -> tuple[dict[str, Any], list[tuple[str, list[int], int, int]], int]:
     """(metadata, tensor infos, end of header). ``data`` may be a prefix of the file;
     ValueError("truncated ...") means more bytes are needed. Fixed-size arrays are skipped."""
     reader = _Reader(data)
@@ -163,11 +181,11 @@ def parse_gguf_header(data) -> Tuple[Dict[str, Any], List[Tuple[str, List[int], 
     return metadata, infos, reader.pos
 
 
-def chat_templates(metadata: Dict[str, Any]) -> Dict[str, str]:
+def chat_templates(metadata: dict[str, Any]) -> dict[str, str]:
     return {k: v for k, v in metadata.items() if k.startswith("tokenizer.chat_template") and isinstance(v, str)}
 
 
-def _scan_gguf(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]) -> None:
+def _scan_gguf(path: Path, result: ModelFormatResult, thresholds: dict[str, Any]) -> None:
     import mmap
 
     with open(path, "rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
@@ -190,15 +208,20 @@ def _scan_gguf(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]
                 count *= d
             start, end = data_start + offset, data_start + offset + count * width
             if end > len(data):
-                result.add("SUSPICIOUS", f"tensor {name} points past the end of the file", f"{path.name}:{name}",
-                           code="gguf_malformed")
+                result.add(
+                    "SUSPICIOUS",
+                    f"tensor {name} points past the end of the file",
+                    f"{path.name}:{name}",
+                    code="gguf_malformed",
+                )
                 continue
             _tensor_stats(result, name, dtype, list(reversed(dims)), bytes(data[start:end]), thresholds)
 
 
 # --- Keras -------------------------------------------------------------------------
 
-def _walk_layers(node: Any) -> Iterator[Dict[str, Any]]:
+
+def _walk_layers(node: Any) -> Iterator[dict[str, Any]]:
     if isinstance(node, dict):
         if "class_name" in node:
             yield node
@@ -217,9 +240,9 @@ def _check_keras_config(config: Any, result: ModelFormatResult, where: str) -> N
         if cls == "Lambda":
             result.add(
                 "SUSPICIOUS",
-                f"Lambda layer '{name}' stores Python bytecode that runs when the model is loaded "
-                "without safe_mode",
-                f"{where}:{name}", code="keras_lambda",
+                f"Lambda layer '{name}' stores Python bytecode that runs when the model is loaded without safe_mode",
+                f"{where}:{name}",
+                code="keras_lambda",
             )
         module, registered = layer.get("module"), layer.get("registered_name")
         custom_module = isinstance(module, str) and not module.startswith(("keras", "tf_keras", "tensorflow"))
@@ -228,11 +251,12 @@ def _check_keras_config(config: Any, result: ModelFormatResult, where: str) -> N
             result.add(
                 "SUSPICIOUS",
                 f"custom object '{cls}' from {module or registered} must be imported to load the model",
-                f"{where}:{name}", code="keras_custom_object",
+                f"{where}:{name}",
+                code="keras_custom_object",
             )
 
 
-def _scan_h5_weights(blob: Union[bytes, Path], result: ModelFormatResult, label: str, thresholds) -> None:
+def _scan_h5_weights(blob: bytes | Path, result: ModelFormatResult, label: str, thresholds) -> None:
     try:
         import h5py
         import numpy as np
@@ -255,7 +279,7 @@ def _scan_h5_weights(blob: Union[bytes, Path], result: ModelFormatResult, label:
         handle.visititems(visit)
 
 
-def _scan_keras(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]) -> None:
+def _scan_keras(path: Path, result: ModelFormatResult, thresholds: dict[str, Any]) -> None:
     with zipfile.ZipFile(path) as archive:
         try:
             config = json.loads(archive.read("config.json"))
@@ -268,11 +292,12 @@ def _scan_keras(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any
                 _scan_h5_weights(archive.read(name), result, f"{path.name}:{name}", thresholds)
 
 
-def _scan_hdf5(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]) -> None:
+def _scan_hdf5(path: Path, result: ModelFormatResult, thresholds: dict[str, Any]) -> None:
     _scan_h5_weights(path, result, path.name, thresholds)
 
 
 # --- ONNX --------------------------------------------------------------------------
+
 
 def _graphs(graph) -> Iterator[Any]:
     yield graph
@@ -291,7 +316,7 @@ def _escapes_directory(location: str) -> bool:
     return location.startswith("~")
 
 
-def _scan_onnx(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]) -> None:
+def _scan_onnx(path: Path, result: ModelFormatResult, thresholds: dict[str, Any]) -> None:
     try:
         import onnx
     except ImportError:
@@ -302,24 +327,42 @@ def _scan_onnx(path: Path, result: ModelFormatResult, thresholds: Dict[str, Any]
     except Exception as error:
         result.add("SUSPICIOUS", f"unreadable ONNX model ({error})", path.name, code="container_unreadable")
         return
-    float_types = {onnx.TensorProto.FLOAT: "F32", onnx.TensorProto.FLOAT16: "F16",
-                   onnx.TensorProto.BFLOAT16: "BF16", onnx.TensorProto.DOUBLE: "F64"}
+    float_types = {
+        onnx.TensorProto.FLOAT: "F32",
+        onnx.TensorProto.FLOAT16: "F16",
+        onnx.TensorProto.BFLOAT16: "BF16",
+        onnx.TensorProto.DOUBLE: "F64",
+    }
     for graph in _graphs(model.graph):
         for tensor in graph.initializer:
             where = f"{path.name}:{tensor.name}"
             if tensor.data_location == onnx.TensorProto.EXTERNAL:
                 location = {e.key: e.value for e in tensor.external_data}.get("location", "")
                 if _escapes_directory(location):
-                    result.add("SUSPICIOUS", f"external data path '{location}' leaves the model directory "
-                               "(a loader would read an arbitrary file)", where, code="onnx_external_path")
+                    result.add(
+                        "SUSPICIOUS",
+                        f"external data path '{location}' leaves the model directory "
+                        "(a loader would read an arbitrary file)",
+                        where,
+                        code="onnx_external_path",
+                    )
                 else:
-                    result.add("SUSPICIOUS", f"tensor stored in external file '{location}' (not scanned)", where,
-                               code="onnx_external_data")
+                    result.add(
+                        "SUSPICIOUS",
+                        f"tensor stored in external file '{location}' (not scanned)",
+                        where,
+                        code="onnx_external_data",
+                    )
             elif tensor.data_type in float_types and tensor.raw_data:
-                _tensor_stats(result, tensor.name, float_types[tensor.data_type], list(tensor.dims),
-                              tensor.raw_data, thresholds)
+                _tensor_stats(
+                    result, tensor.name, float_types[tensor.data_type], list(tensor.dims), tensor.raw_data, thresholds
+                )
         for node in graph.node:
             if node.domain not in _ONNX_STANDARD_DOMAINS:
-                result.add("SUSPICIOUS", f"node '{node.name or node.op_type}' uses custom operator "
-                           f"{node.domain}::{node.op_type}, which needs a native library to run",
-                           f"{path.name}:{node.name or node.op_type}", code="onnx_custom_op")
+                result.add(
+                    "SUSPICIOUS",
+                    f"node '{node.name or node.op_type}' uses custom operator "
+                    f"{node.domain}::{node.op_type}, which needs a native library to run",
+                    f"{path.name}:{node.name or node.op_type}",
+                    code="onnx_custom_op",
+                )

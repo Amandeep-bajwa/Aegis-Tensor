@@ -18,7 +18,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from aegis.verdict import OWNER, PLATFORM
 
@@ -33,7 +33,7 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def source_of(path: Path, repo_url: Optional[str], revision: Optional[str]) -> Dict[str, Optional[str]]:
+def source_of(path: Path, repo_url: str | None, revision: str | None) -> dict[str, str | None]:
     """Repository URL, revision and path in the repo; read from a Hugging Face cache path when not given."""
     match = _HF_CACHE.search(Path(path).resolve().as_posix())
     if match:
@@ -42,27 +42,37 @@ def source_of(path: Path, repo_url: Optional[str], revision: Optional[str]) -> D
     return {"repo_url": repo_url, "revision": revision, "path_in_repo": match["path"] if match else Path(path).name}
 
 
-def _route(verdicts: List[Dict[str, Any]]) -> str:
+def _route(verdicts: list[dict[str, Any]]) -> str:
     routes = {v["disclosure"] for v in verdicts}
     return PLATFORM if PLATFORM in routes else OWNER if OWNER in routes else "none"
 
 
-def write_bundle(out_dir: Path, outcomes: List[Dict[str, Any]], document: Dict[str, Any],
-                 repo_url: Optional[str], revision: Optional[str], tool_version: str) -> Path:
+def write_bundle(
+    out_dir: Path,
+    outcomes: list[dict[str, Any]],
+    document: dict[str, Any],
+    repo_url: str | None,
+    revision: str | None,
+    tool_version: str,
+) -> Path:
     out_dir.mkdir(parents=True, exist_ok=False)
     files = []
     for outcome in outcomes:
         path = Path(outcome["path"])
-        files.append({
-            "name": path.name,
-            "size": path.stat().st_size if path.exists() else None,
-            "sha256": sha256_of(path) if path.exists() else None,
-            "source": source_of(path, repo_url, revision),
-            "format": outcome.get("format"),
-            "verdict": outcome["verdict"],
-            "findings": [{"rule": f.rule, "severity": f.severity, "message": f.message, "location": f.location}
-                         for f in outcome["findings"]],
-        })
+        files.append(
+            {
+                "name": path.name,
+                "size": path.stat().st_size if path.exists() else None,
+                "sha256": sha256_of(path) if path.exists() else None,
+                "source": source_of(path, repo_url, revision),
+                "format": outcome.get("format"),
+                "verdict": outcome["verdict"],
+                "findings": [
+                    {"rule": f.rule, "severity": f.severity, "message": f.message, "location": f.location}
+                    for f in outcome["findings"]
+                ],
+            }
+        )
     route = _route([f["verdict"] for f in files])
     manifest = {
         "tool": {"name": "aegis-tensor", "version": tool_version},
@@ -102,7 +112,7 @@ _FIX = {
 }
 
 
-def render_report(manifest: Dict[str, Any]) -> str:
+def render_report(manifest: dict[str, Any]) -> str:
     files = manifest["files"]
     sources = sorted({f["source"]["repo_url"] for f in files if f["source"]["repo_url"]})
     title = ", ".join(sources) or ", ".join(f["name"] for f in files)
@@ -125,8 +135,10 @@ def render_report(manifest: Dict[str, Any]) -> str:
     ]
     for f in files:
         source = f["source"]
-        lines.append(f"| `{source['path_in_repo']}` | {source['repo_url'] or 'unknown'} | "
-                     f"`{source['revision'] or 'unknown'}` | {f['size']} | `{f['sha256']}` | {f['verdict']['label']} |")
+        lines.append(
+            f"| `{source['path_in_repo']}` | {source['repo_url'] or 'unknown'} | "
+            f"`{source['revision'] or 'unknown'}` | {f['size']} | `{f['sha256']}` | {f['verdict']['label']} |"
+        )
     lines += ["", "## Findings", ""]
     for f in files:
         lines.append(f"### `{f['name']}`: {f['verdict']['label']}")
@@ -137,9 +149,11 @@ def render_report(manifest: Dict[str, Any]) -> str:
             lines.append("No findings.")
         for finding in f["findings"]:
             where = ", ".join(f"{k} `{v}`" for k, v in finding["location"].items() if k != "file")
-            lines.append(f"- **{finding['rule']}** ({finding['severity']}){' at ' + where if where else ''}: "
-                         f"{finding['message']}")
-        fixes = sorted({_FIX[x['rule']] for x in f["findings"] if x["rule"] in _FIX})
+            lines.append(
+                f"- **{finding['rule']}** ({finding['severity']}){' at ' + where if where else ''}: "
+                f"{finding['message']}"
+            )
+        fixes = sorted({_FIX[x["rule"]] for x in f["findings"] if x["rule"] in _FIX})
         if fixes:
             lines += ["", "Suggested fixes for the owner:", *[f"- {fix}" for fix in fixes]]
         lines.append("")
@@ -157,6 +171,6 @@ def render_report(manifest: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def default_bundle_dir(paths: List[Path]) -> Path:
+def default_bundle_dir(paths: list[Path]) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return Path(f"aegis-report-{Path(paths[0]).stem}-{stamp}")

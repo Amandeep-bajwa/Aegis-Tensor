@@ -45,6 +45,7 @@ def _scan(*args, engines="none"):
 
 # --- Verdicts -------------------------------------------------------------------------
 
+
 @pytest.mark.claim("C17")
 def test_verdict_levels_and_next_steps(tmp_path, marker):
     clean, tampered, evil = tmp_path / "clean.safetensors", tmp_path / "t.safetensors", tmp_path / "evil.pkl"
@@ -107,7 +108,8 @@ def test_leaked_key_in_gguf_metadata_is_reported(tmp_path):
 
 needs_engines = pytest.mark.skipif(
     not all(__import__("importlib").util.find_spec(n) for n in ("fickling", "modelscan")),
-    reason="install the engines extra: pip install -e .[engines]")
+    reason="install the engines extra: pip install -e .[engines]",
+)
 
 
 @needs_engines
@@ -131,8 +133,13 @@ def test_renamed_file_is_still_given_to_modelscan(tmp_path, marker):
     path = tmp_path / "weights.dat"
     path.write_bytes(pickle.dumps(_Touch(marker)))
     _, document = _scan(path, engines="modelscan")
-    assert document["files"][0]["engines"][0] == {"name": "modelscan", "version": document["files"][0]["engines"][0]["version"],
-                                                  "ran": True, "error": None, "worst": "critical"}
+    assert document["files"][0]["engines"][0] == {
+        "name": "modelscan",
+        "version": document["files"][0]["engines"][0]["version"],
+        "ran": True,
+        "error": None,
+        "worst": "critical",
+    }
 
 
 @pytest.mark.claim("C19")
@@ -157,6 +164,7 @@ def test_unknown_or_missing_engine_is_an_error(tmp_path):
 
 # --- Report bundle ------------------------------------------------------------------------
 
+
 @pytest.mark.claim("C20")
 def test_report_bundle_packages_hashes_source_and_findings_without_the_model(tmp_path, marker):
     import hashlib
@@ -173,8 +181,11 @@ def test_report_bundle_packages_hashes_source_and_findings_without_the_model(tmp
     entry = manifest["files"][0]
     assert manifest["sent"] is False and manifest["disclosure_route"] == "platform"
     assert entry["sha256"] == hashlib.sha256(evil.read_bytes()).hexdigest()
-    assert entry["source"] == {"repo_url": "https://huggingface.co/acme/chat", "revision": "ab" * 20,
-                               "path_in_repo": "model.pkl"}
+    assert entry["source"] == {
+        "repo_url": "https://huggingface.co/acme/chat",
+        "revision": "ab" * 20,
+        "path_in_repo": "model.pkl",
+    }
     report = (out / "REPORT.md").read_text()
     assert "Do not contact the uploader" in report and "Nothing has been sent" in report
     assert sorted(p.name for p in out.iterdir()) == ["REPORT.md", "findings.json", "manifest.json"]

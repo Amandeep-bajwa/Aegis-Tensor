@@ -40,16 +40,21 @@ def collect_markers() -> dict[str, list[tuple[str, str, int]]]:
             if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
                 continue
             for decorator in node.decorator_list:
-                if (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
-                        and decorator.func.attr == "claim"):
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "claim"
+                ):
                     for arg in decorator.args:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             found.setdefault(arg.value, []).append(
-                                (path.relative_to(ROOT).as_posix(), node.name, node.lineno))
+                                (path.relative_to(ROOT).as_posix(), node.name, node.lineno)
+                            )
     return found
 
 
 # --- Benchmark values --------------------------------------------------------------
+
 
 def _import_benchmark(name: str):
     sys.path.insert(0, str(ROOT))
@@ -68,13 +73,19 @@ def calibration_values() -> tuple[dict, list[str]]:
     for group in ("safetensors", "mlx", "gguf", "templates"):
         stale = [f for f in numbers[group]["fingerprints"] if f != current]
         if stale:
-            problems.append(f"calibration {group} results were produced under rules {stale}, current rules are "
-                            f"{current}: re-run benchmarks/calibrate.py")
+            problems.append(
+                f"calibration {group} results were produced under rules {stale}, current rules are "
+                f"{current}: re-run benchmarks/calibrate.py"
+            )
     values = {
-        "safetensors_flagged": numbers["safetensors"]["flagged"], "safetensors_models": numbers["safetensors"]["models"],
-        "mlx_flagged": numbers["mlx"]["flagged"], "mlx_models": numbers["mlx"]["models"],
-        "gguf_flagged": numbers["gguf"]["flagged"], "gguf_models": numbers["gguf"]["models"],
-        "template_flagged": numbers["templates"]["flagged_files"], "template_files": numbers["templates"]["files"],
+        "safetensors_flagged": numbers["safetensors"]["flagged"],
+        "safetensors_models": numbers["safetensors"]["models"],
+        "mlx_flagged": numbers["mlx"]["flagged"],
+        "mlx_models": numbers["mlx"]["models"],
+        "gguf_flagged": numbers["gguf"]["flagged"],
+        "gguf_models": numbers["gguf"]["models"],
+        "template_flagged": numbers["templates"]["flagged_files"],
+        "template_files": numbers["templates"]["files"],
     }
     return values, problems
 
@@ -94,8 +105,10 @@ def disarm_values() -> tuple[dict, list[str]]:
             problems.append(f"disarm benchmark has no result for {label!r}")
             continue
         if task.get("fingerprint") != current:
-            problems.append(f"disarm result {label!r} was produced under disarm code {task.get('fingerprint')}, "
-                            f"current is {current}: re-run benchmarks/disarm_impact.py")
+            problems.append(
+                f"disarm result {label!r} was produced under disarm code {task.get('fingerprint')}, "
+                f"current is {current}: re-run benchmarks/disarm_impact.py"
+            )
         width = default_width(task["dtype"], DEFAULT_LOW_BITS)
         rows = {row["low_bits"]: row for row in task["rows"]}
         metric = next(k for k in task["rows"][0] if k not in ("low_bits", "safe", "bound", "seconds"))
@@ -111,6 +124,7 @@ BENCHMARK_VALUES = {"C10": calibration_values, "C11": disarm_values}
 
 # --- Rendering and checks ----------------------------------------------------------
 
+
 def render_section(claims: list[dict], markers: dict) -> str:
     lines = [START, "", "| ID | Claim | Evidence |", "|---|---|---|"]
     for kind_label, kinds in (("claim", (None, "benchmark")), ("limit", ("limit",))):
@@ -118,8 +132,10 @@ def render_section(claims: list[dict], markers: dict) -> str:
             if claim.get("kind") not in kinds:
                 continue
             if claim.get("status") == "pending":
-                text = (f"_Pending: not claimed until its benchmark has run under the current code "
-                        f"(see [{Path(claim['benchmark']).name}]({claim['benchmark']}))._")
+                text = (
+                    f"_Pending: not claimed until its benchmark has run under the current code "
+                    f"(see [{Path(claim['benchmark']).name}]({claim['benchmark']}))._"
+                )
             else:
                 text = claim["text"].format(**claim.get("values", {}))
             if claim.get("platform"):
@@ -166,8 +182,10 @@ def check(write: bool = False, benchmarks: bool = True) -> list[str]:
                 continue  # shown as pending in the README; nothing is claimed yet
             problems += stale
             if not write and claim.get("values") != values:
-                problems.append(f"{claim['id']} states {claim.get('values')}, but the results give {values}: "
-                                "run `python scripts/claims.py --write`")
+                problems.append(
+                    f"{claim['id']} states {claim.get('values')}, but the results give {values}: "
+                    "run `python scripts/claims.py --write`"
+                )
     if write:
         REGISTER.write_text(json.dumps(register, indent=2, ensure_ascii=False) + "\n")
     section = render_section(claims, markers)
@@ -175,7 +193,7 @@ def check(write: bool = False, benchmarks: bool = True) -> list[str]:
     if START not in readme or END not in readme:
         problems.append("README.md has no claims section markers")
     else:
-        current = readme[readme.index(START):readme.index(END) + len(END)]
+        current = readme[readme.index(START) : readme.index(END) + len(END)]
         if current != section:
             if write:
                 README.write_text(readme.replace(current, section))

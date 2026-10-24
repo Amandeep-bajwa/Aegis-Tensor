@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from aegis.fuzzer import TrojanScanReport
 
@@ -48,7 +48,7 @@ def _macos_profile(workdir: str) -> str:
 """
 
 
-def sandbox_prefix(workdir: str) -> List[str]:
+def sandbox_prefix(workdir: str) -> list[str]:
     """Command prefix that isolates the child, or SandboxUnavailable."""
     if sys.platform == "darwin" and shutil.which("sandbox-exec"):
         return ["sandbox-exec", "-p", _macos_profile(workdir)]
@@ -62,7 +62,7 @@ def sandbox_prefix(workdir: str) -> List[str]:
     )
 
 
-def _child_env(workdir: str) -> Dict[str, str]:
+def _child_env(workdir: str) -> dict[str, str]:
     import aegis
 
     package_root = str(Path(aegis.__file__).resolve().parent.parent)
@@ -76,7 +76,7 @@ def _child_env(workdir: str) -> Dict[str, str]:
     }
 
 
-def run_sandboxed(request: Dict[str, Any], timeout: float = 1800.0) -> Dict[str, Any]:
+def run_sandboxed(request: dict[str, Any], timeout: float = 1800.0) -> dict[str, Any]:
     """Run the worker on ``request`` inside the sandbox and return its JSON response."""
     with tempfile.TemporaryDirectory(prefix="aegis-sandbox-") as tmp:
         workdir = os.path.realpath(tmp)
@@ -84,12 +84,20 @@ def run_sandboxed(request: Dict[str, Any], timeout: float = 1800.0) -> Dict[str,
         response_path = Path(workdir) / "response.json"
         request_path.write_text(json.dumps(request))
         command = sandbox_prefix(workdir) + [
-            sys.executable, "-m", "aegis.sandbox_worker", str(request_path), str(response_path),
+            sys.executable,
+            "-m",
+            "aegis.sandbox_worker",
+            str(request_path),
+            str(response_path),
         ]
         try:
             proc = subprocess.run(
-                command, env=_child_env(workdir), cwd=workdir,
-                capture_output=True, text=True, timeout=timeout,
+                command,
+                env=_child_env(workdir),
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             raise SandboxError(f"sandboxed process exceeded {timeout:.0f}s and was killed")

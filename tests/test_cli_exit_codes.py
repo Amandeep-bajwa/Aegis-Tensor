@@ -48,12 +48,13 @@ def whitespace_model(tmp_path):
     save_file({"a.weight": _weights(4)}, str(path))
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    padded = raw[8:8 + n].rstrip(b" ") + b" " * 4096
-    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    padded = raw[8 : 8 + n].rstrip(b" ") + b" " * 4096
+    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     return path
 
 
 # --- Exit 0 -------------------------------------------------------------------
+
 
 @pytest.mark.claim("C16")
 @needs_core
@@ -83,6 +84,7 @@ def test_clean_pickle_exits_0(tmp_path):
 
 
 # --- Exit 1 -------------------------------------------------------------------
+
 
 @pytest.mark.claim("C16")
 @needs_core
@@ -139,6 +141,7 @@ def test_fail_on_is_case_insensitive(overwritten_model):
 
 # --- Exit 2 -------------------------------------------------------------------
 
+
 @pytest.mark.claim("C16")
 def test_missing_file_exits_2(tmp_path):
     assert _scan(tmp_path / "nope.safetensors").exit_code == EXIT_ERROR
@@ -170,6 +173,7 @@ def test_invalid_fail_on_value_exits_2(tmp_path):
 
 
 # --- JSON report carries the severity -------------------------------------------
+
 
 @needs_core
 def test_json_report_includes_max_severity_and_rules(overwritten_model, tmp_path):

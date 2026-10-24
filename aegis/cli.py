@@ -17,36 +17,36 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+import json
+import zipfile
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
-import json
-import zipfile
+
 import typer
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
     TimeElapsedColumn,
 )
-from rich import box
+from rich.table import Table
 
 from aegis import (
-    __version__,
     CORE_AVAILABLE,
     TORCH_AVAILABLE,
+    __version__,
     scan_safetensors,
 )
+from aegis.disarm import DEFAULT_LOW_BITS, default_disarm_path
 from aegis.findings import from_fuzz
 from aegis.severity import EXIT_ERROR, exit_code_for, tensor_severity
 from aegis.thresholds import DEFAULT_THRESHOLDS
-from aegis.disarm import DEFAULT_LOW_BITS, default_disarm_path
 
 
 class FailOn(str, Enum):
@@ -76,6 +76,7 @@ def get_risk_badge(level: str) -> str:
     elif normalized == "CLEAN":
         return "[bold white on green] [OK] CLEAN [/bold white on green]"
     return level
+
 
 app = typer.Typer(
     name="aegis",
@@ -107,8 +108,12 @@ def main(
 ):
     if version:
         console.print(f"[bold cyan]Aegis-Tensor[/bold cyan] version [green]{__version__}[/green]")
-        console.print(f"Rust Core Engine (`aegis_core`): {'[bold green]Loaded[/bold green]' if CORE_AVAILABLE else '[bold yellow]Not compiled (run `maturin develop`)[/bold yellow]'}")
-        console.print(f"PyTorch Dynamic Engine: {'[bold green]Available[/bold green]' if TORCH_AVAILABLE else '[bold yellow]Not installed[/bold yellow]'}")
+        console.print(
+            f"Rust Core Engine (`aegis_core`): {'[bold green]Loaded[/bold green]' if CORE_AVAILABLE else '[bold yellow]Not compiled (run `maturin develop`)[/bold yellow]'}"
+        )
+        console.print(
+            f"PyTorch Dynamic Engine: {'[bold green]Available[/bold green]' if TORCH_AVAILABLE else '[bold yellow]Not installed[/bold yellow]'}"
+        )
         raise typer.Exit()
 
     if ctx.invoked_subcommand is None:
@@ -116,18 +121,17 @@ def main(
         console.print("[yellow]Use [bold]aegis --help[/bold] to see available commands.[/yellow]")
 
 
-
-
-def _treatment_lines(results, header_result, model_path: Path) -> List[str]:
+def _treatment_lines(results, header_result, model_path: Path) -> list[str]:
     """Map each kind of finding to the treatment that addresses it.
 
     Only treatments that exist in this tool are recommended. Anything else is
     reported as quarantine, meaning the tensor must come from another source.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     structured = [r.name for r in results if any("structured" in x for x in r.anomaly_reasons)]
     overwritten = [
-        r.name for r in results
+        r.name
+        for r in results
         if any(m in x for x in r.anomaly_reasons for m in ("overwritten", "encrypted", "could not be read"))
     ]
     header_sanitize = [f for f in header_result.findings if f.treatment == "sanitize"]
@@ -137,8 +141,7 @@ def _treatment_lines(results, header_result, model_path: Path) -> List[str]:
     if structured or header_sanitize:
         flags = " --strip-metadata" if header_sanitize else ""
         lines.append(
-            f"• Structured low-order bits or header payload: run "
-            f"`{disarm_cmd}{flags}`, then re-scan the output."
+            f"• Structured low-order bits or header payload: run `{disarm_cmd}{flags}`, then re-scan the output."
         )
     if overwritten or header_quarantine:
         names = ", ".join(overwritten + [f.where for f in header_quarantine])[:200]
@@ -180,7 +183,7 @@ def _tensor_record(res) -> dict:
     }
 
 
-def _scan_file(path: Path, thresholds: dict, engines: Optional[List[str]] = None) -> dict:
+def _scan_file(path: Path, thresholds: dict, engines: list[str] | None = None) -> dict:
     """Scan one file and attach its verdict. See _scan_file_core for routing."""
     from aegis.engines import run_engines
     from aegis.findings import from_engines
@@ -219,16 +222,26 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         raise ScanError(str(e))
     if special:  # GGUF, Keras, HDF5 or ONNX: format-specific checks plus tensor statistics
         result = scan_model_format(path, special, thresholds)
-        return {"path": str(path), "format": special, "kind": "format", "container": result,
-                "findings": from_container(str(path), result) + from_safetensors(str(path), result.tensor_results),
-                "tensors": [_tensor_record(r) for r in result.tensor_results]}
+        return {
+            "path": str(path),
+            "format": special,
+            "kind": "format",
+            "container": result,
+            "findings": from_container(str(path), result) + from_safetensors(str(path), result.tensor_results),
+            "tensors": [_tensor_record(r) for r in result.tensor_results],
+        }
     if file_format != "safetensors":
         try:
             container = scan_pickle_file(path, keep_streams=keep_streams)
         except (OSError, zipfile.BadZipFile) as e:
             raise ScanError(str(e))
-        return {"path": str(path), "format": container.format, "kind": "container", "container": container,
-                "findings": from_container(str(path), container)}
+        return {
+            "path": str(path),
+            "format": container.format,
+            "kind": "container",
+            "container": container,
+            "findings": from_container(str(path), container),
+        }
     if not CORE_AVAILABLE or scan_safetensors is None:
         raise ScanError("the Rust core (aegis_core) is not compiled; run `maturin develop` or `pip install -e .`")
     try:
@@ -238,9 +251,15 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         header = scan_safetensors_header(path)
     except Exception as e:  # malformed safetensors: core parse error, bad header JSON or encoding
         raise ScanError(str(e))
-    return {"path": str(path), "format": "safetensors", "kind": "safetensors", "tensor_results": tensors,
-            "header": header, "findings": from_safetensors(str(path), tensors, header),
-            "tensors": [_tensor_record(r) for r in tensors]}
+    return {
+        "path": str(path),
+        "format": "safetensors",
+        "kind": "safetensors",
+        "tensor_results": tensors,
+        "header": header,
+        "findings": from_safetensors(str(path), tensors, header),
+        "tensors": [_tensor_record(r) for r in tensors],
+    }
 
 
 _VERDICT_STYLE = {"critical": ("red", "🚨"), "suspicious": ("yellow", "⚠️"), "no_known_findings": ("green", "✅")}
@@ -249,7 +268,9 @@ _VERDICT_STYLE = {"critical": ("red", "🚨"), "suspicious": ("yellow", "⚠️"
 def _render_verdict(outcome: dict) -> None:
     verdict = outcome["verdict"]
     color, icon = _VERDICT_STYLE[verdict["level"]]
-    body = f"[bold {color}]{verdict['label']}[/bold {color}]  [dim]({verdict['reason']})[/dim]\n\n{verdict['next_step']}"
+    body = (
+        f"[bold {color}]{verdict['label']}[/bold {color}]  [dim]({verdict['reason']})[/dim]\n\n{verdict['next_step']}"
+    )
     if verdict.get("command"):
         body += f"\n\n[bold]Next:[/bold] [cyan]{verdict['command']}[/cyan]"
     if verdict["disclosure"] == "platform":
@@ -266,7 +287,11 @@ def _render_engines(outcome: dict) -> None:
         elif not result.ran:
             state = "[dim]not applicable to this format[/dim]"
         else:
-            state = f"[red]{result.worst}[/red] ({len(result.issues)} issue(s))" if result.issues else "[green]no issues[/green]"
+            state = (
+                f"[red]{result.worst}[/red] ({len(result.issues)} issue(s))"
+                if result.issues
+                else "[green]no issues[/green]"
+            )
         console.print(f"[dim]Engine[/dim] [bold]{result.engine}[/bold] {result.version or ''}: {state}")
 
 
@@ -307,8 +332,10 @@ def _render_container_text(outcome: dict) -> None:
 def _render_findings_text(outcome: dict) -> None:
     """Generic text view: one row per finding (used for GGUF, Keras, HDF5 and ONNX)."""
     findings = outcome["findings"]
-    console.print(f"[bold]Scanning:[/bold] [cyan]{Path(outcome['path']).resolve()}[/cyan] "
-                  f"[dim](format: {outcome['format']}, {len(outcome['tensors'])} float tensors analysed)[/dim]")
+    console.print(
+        f"[bold]Scanning:[/bold] [cyan]{Path(outcome['path']).resolve()}[/cyan] "
+        f"[dim](format: {outcome['format']}, {len(outcome['tensors'])} float tensors analysed)[/dim]"
+    )
     if not findings:
         console.print(Panel(f"{get_risk_badge('CLEAN')}\n\nNo findings.", title="✅ Model Clean", border_style="green"))
         return
@@ -361,12 +388,12 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
 
         entropy_color = "red" if res.entropy > thresholds["entropy"] else "white"
         lane = res.exponent_lane_entropy
-        lane_text = "-" if lane is None else (
-            f"[red]{lane:.4f}[/red]" if lane > thresholds["exponent"] else f"{lane:.4f}"
+        lane_text = (
+            "-" if lane is None else (f"[red]{lane:.4f}[/red]" if lane > thresholds["exponent"] else f"{lane:.4f}")
         )
         plane = res.low_plane_entropy
-        plane_text = "-" if plane is None else (
-            f"[red]{plane:.4f}[/red]" if plane < thresholds["plane"] else f"{plane:.4f}"
+        plane_text = (
+            "-" if plane is None else (f"[red]{plane:.4f}[/red]" if plane < thresholds["plane"] else f"{plane:.4f}")
         )
         table.add_row(
             res.name,
@@ -426,8 +453,9 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
 
 @app.command(name="scan")
 def scan_command(
-    model_paths: List[Path] = typer.Argument(
-        ..., help="Model files to scan. Each file's format is read from its bytes, not its extension.",
+    model_paths: list[Path] = typer.Argument(
+        ...,
+        help="Model files to scan. Each file's format is read from its bytes, not its extension.",
     ),
     entropy_threshold: float = typer.Option(
         DEFAULT_THRESHOLDS["entropy"],
@@ -445,7 +473,7 @@ def scan_command(
         "--plane-floor",
         help="Low mantissa bit-plane entropy (bits) below which the least significant bits count as structured. Clean weights measure about 8.",
     ),
-    benford_threshold: Optional[float] = typer.Option(
+    benford_threshold: float | None = typer.Option(
         None,
         "--benford-threshold",
         "-b",
@@ -463,9 +491,9 @@ def scan_command(
         "-f",
         case_sensitive=False,
         help="text (default); json = findings document (docs/schema/findings-v1.schema.json); "
-             "sarif = SARIF 2.1.0 for GitHub code scanning. json and sarif are printed to stdout.",
+        "sarif = SARIF 2.1.0 for GitHub code scanning. json and sarif are printed to stdout.",
     ),
-    json_output: Optional[Path] = typer.Option(
+    json_output: Path | None = typer.Option(
         None,
         "--output-json",
         "-o",
@@ -476,7 +504,7 @@ def scan_command(
         "--engines",
         envvar="AEGIS_ENGINES",
         help="Optional engines folded into the verdict: auto (every installed one: fickling, modelscan), "
-             "none, or a comma-separated list.",
+        "none, or a comma-separated list.",
     ),
 ):
     """Static security scan of model files.
@@ -490,8 +518,12 @@ def scan_command(
     text = output_format == OutputFormat.text
     if text:
         print_banner()
-    thresholds = {"entropy": entropy_threshold, "exponent": exponent_threshold,
-                  "plane": plane_floor, "benford": benford_threshold}
+    thresholds = {
+        "entropy": entropy_threshold,
+        "exponent": exponent_threshold,
+        "plane": plane_floor,
+        "benford": benford_threshold,
+    }
     from aegis.engines import select
     from aegis.verdict import file_verdict
 
@@ -509,8 +541,15 @@ def scan_command(
             outcome = _scan_file(path, thresholds, engine_names)
         except ScanError as e:
             errored = True
-            files.append({"path": str(path), "format": None, "findings": [], "error": str(e),
-                          "verdict": file_verdict(str(path), None, [], error=str(e))})
+            files.append(
+                {
+                    "path": str(path),
+                    "format": None,
+                    "findings": [],
+                    "error": str(e),
+                    "verdict": file_verdict(str(path), None, [], error=str(e)),
+                }
+            )
             if text:
                 console.print(f"[bold red]Scan failed:[/bold red] {e}")
                 _render_verdict(files[-1])
@@ -569,34 +608,38 @@ def fuzz_command(
         "-n",
         help="Number of perturbation fuzzing iterations to execute.",
     ),
-    input_shape: Optional[str] = typer.Option(
+    input_shape: str | None = typer.Option(
         None,
         "--input-shape",
         "-s",
         help="Comma-delimited input tensor dimensions (e.g. '1,10' or '1,3,224,224'). Derived from image "
-             "configs with --hf-config; defaults to 1,10 for --trust-pickle.",
+        "configs with --hf-config; defaults to 1,10 for --trust-pickle.",
     ),
-    vocab_size: Optional[int] = typer.Option(
+    vocab_size: int | None = typer.Option(
         None,
         "--vocab-size",
         help="Fuzz with token IDs for language models. Taken from --hf-config when it has a vocabulary.",
     ),
     seq_len: int = typer.Option(32, "--seq-len", help="Token sequence length when fuzzing with token IDs."),
-    arch: Optional[str] = typer.Option(
+    arch: str | None = typer.Option(
         None,
         "--arch",
         help="Trusted architecture as package.module:ClassName. Weights load from the model file without pickle.",
     ),
-    arch_kwargs: Optional[str] = typer.Option(None, "--arch-kwargs", help="JSON object of constructor arguments for --arch."),
-    hf_config: Optional[str] = typer.Option(
+    arch_kwargs: str | None = typer.Option(
+        None, "--arch-kwargs", help="JSON object of constructor arguments for --arch."
+    ),
+    hf_config: str | None = typer.Option(
         None,
         "--hf-config",
         help="Hugging Face repo id or local directory whose config.json defines the architecture "
-             "(trust_remote_code is off; no weights or code are downloaded).",
+        "(trust_remote_code is off; no weights or code are downloaded).",
     ),
-    hf_revision: Optional[str] = typer.Option(None, "--hf-revision", help="Revision (commit hash) for --hf-config."),
+    hf_revision: str | None = typer.Option(None, "--hf-revision", help="Revision (commit hash) for --hf-config."),
     strict_weights: bool = typer.Option(
-        False, "--strict-weights", help="Fail when weight keys do not exactly match the architecture.",
+        False,
+        "--strict-weights",
+        help="Fail when weight keys do not exactly match the architecture.",
     ),
     seed: int = typer.Option(
         0,
@@ -607,12 +650,14 @@ def fuzz_command(
         False,
         "--trust-pickle",
         help="Unpickle a full nn.Module. It runs code from the file, so it happens in an isolated process "
-             "with no network (refused when no sandbox is available). See docs/FUZZ_SAFETY.md.",
+        "with no network (refused when no sandbox is available). See docs/FUZZ_SAFETY.md.",
     ),
     sandbox_timeout: float = typer.Option(
-        1800.0, "--sandbox-timeout", help="Seconds before the sandboxed process is killed.",
+        1800.0,
+        "--sandbox-timeout",
+        help="Seconds before the sandboxed process is killed.",
     ),
-    json_output: Optional[Path] = typer.Option(
+    json_output: Path | None = typer.Option(
         None,
         "--output-json",
         "-o",
@@ -744,8 +789,13 @@ def fuzz_command(
                 result = model.load_state_dict(state, strict=strict_weights)
                 keys = {"missing": list(result.missing_keys), "unexpected": list(result.unexpected_keys)}
         except Exception as e:
-            console.print(Panel(f"[bold red]Could not build the model:[/bold red]\n{e}", title="❌ Model Load Error",
-                                border_style="red"))
+            console.print(
+                Panel(
+                    f"[bold red]Could not build the model:[/bold red]\n{e}",
+                    title="❌ Model Load Error",
+                    border_style="red",
+                )
+            )
             raise typer.Exit(code=1)
         if keys["missing"] or keys["unexpected"]:
             console.print(
@@ -760,15 +810,27 @@ def fuzz_command(
             elif getattr(config, "vocab_size", None):
                 vocab = config.vocab_size
         if vocab is None and shape is None:
-            console.print("[bold red]Error:[/bold red] pass --input-shape (float inputs) or --vocab-size (token inputs).")
+            console.print(
+                "[bold red]Error:[/bold red] pass --input-shape (float inputs) or --vocab-size (token inputs)."
+            )
             raise typer.Exit(code=1)
         mode = f"tokens (vocab {vocab}, length {seq_len})" if vocab is not None else f"input shape {shape}"
-        console.print(f"[dim]Loaded weights without pickle · {mode} · {iterations} iterations · "
-                      f"spike threshold {spike_threshold:.1f}x · seed {seed}[/dim]\n")
-        report = run_with_progress(lambda cb: fuzz_model(
-            model, spike_threshold, iterations, seed, input_shape=shape, vocab_size=vocab, seq_len=seq_len,
-            progress_callback=cb,
-        ))
+        console.print(
+            f"[dim]Loaded weights without pickle · {mode} · {iterations} iterations · "
+            f"spike threshold {spike_threshold:.1f}x · seed {seed}[/dim]\n"
+        )
+        report = run_with_progress(
+            lambda cb: fuzz_model(
+                model,
+                spike_threshold,
+                iterations,
+                seed,
+                input_shape=shape,
+                vocab_size=vocab,
+                seq_len=seq_len,
+                progress_callback=cb,
+            )
+        )
     elif file_format == "safetensors":
         console.print(
             Panel(
@@ -800,34 +862,49 @@ def fuzz_command(
 
         if shape is None and vocab_size is None:
             shape = (1, 10)
-        console.print(f"[dim]Unpickling in an isolated process (no network) · {iterations} iterations · "
-                      f"spike threshold {spike_threshold:.1f}x · seed {seed}[/dim]\n")
+        console.print(
+            f"[dim]Unpickling in an isolated process (no network) · {iterations} iterations · "
+            f"spike threshold {spike_threshold:.1f}x · seed {seed}[/dim]\n"
+        )
         try:
             with console.status("[bold green]Unpickling and fuzzing inside the sandbox...[/bold green]"):
                 report = fuzz_pickled_model(
-                    model_path, timeout=sandbox_timeout, spike_threshold=spike_threshold, iterations=iterations,
-                    seed=seed, input_shape=list(shape) if shape else None, vocab_size=vocab_size, seq_len=seq_len,
+                    model_path,
+                    timeout=sandbox_timeout,
+                    spike_threshold=spike_threshold,
+                    iterations=iterations,
+                    seed=seed,
+                    input_shape=list(shape) if shape else None,
+                    vocab_size=vocab_size,
+                    seq_len=seq_len,
                 )
         except SandboxUnavailable as e:
-            console.print(Panel(f"[bold red]Refusing to unpickle:[/bold red] {e}", title="❌ No Sandbox",
-                                border_style="red"))
+            console.print(
+                Panel(f"[bold red]Refusing to unpickle:[/bold red] {e}", title="❌ No Sandbox", border_style="red")
+            )
             raise typer.Exit(code=1)
         except SandboxError as e:
             console.print(f"[bold red]Sandboxed fuzzing failed:[/bold red] {e}")
             raise typer.Exit(code=1)
-        console.print("[dim]Sandbox: no network; on macOS also no writes outside a throwaway directory and no "
-                      "process spawning. A malicious file can still forge its own report: see docs/FUZZ_SAFETY.md.[/dim]")
+        console.print(
+            "[dim]Sandbox: no network; on macOS also no writes outside a throwaway directory and no "
+            "process spawning. A malicious file can still forge its own report: see docs/FUZZ_SAFETY.md.[/dim]"
+        )
     else:
         # A weights-only load never runs code. A state dict still needs an architecture.
         try:
             torch.load(str(model_path), map_location="cpu", weights_only=True)
-            message = ("The file holds plain weights (a state dict). Pass the architecture with "
-                       "[bold green]--arch[/bold green] or [bold green]--hf-config[/bold green] to fuzz it.")
+            message = (
+                "The file holds plain weights (a state dict). Pass the architecture with "
+                "[bold green]--arch[/bold green] or [bold green]--hf-config[/bold green] to fuzz it."
+            )
         except Exception:
-            message = ("The file is a pickled nn.Module. Unpickling it runs code from the file, so it is refused. "
-                       "Export the weights to .safetensors and use [bold green]--arch[/bold green]/"
-                       "[bold green]--hf-config[/bold green], or pass [bold green]--trust-pickle[/bold green] "
-                       "to unpickle it inside an isolated process.")
+            message = (
+                "The file is a pickled nn.Module. Unpickling it runs code from the file, so it is refused. "
+                "Export the weights to .safetensors and use [bold green]--arch[/bold green]/"
+                "[bold green]--hf-config[/bold green], or pass [bold green]--trust-pickle[/bold green] "
+                "to unpickle it inside an isolated process."
+            )
         console.print(Panel(message, title="❌ Model Load Refused", border_style="red"))
         raise typer.Exit(code=1)
 
@@ -861,7 +938,7 @@ def fuzz_command(
         # The same ratio the detector flags: fuzzed L_inf over the clean L_inf at matched magnitude.
         ratio = report.layer_spike_ratios.get(lname, 0.0)
         is_susp = lname in report.suspicious_layers
-        is_peak = (lname == overall_peak_layer)
+        is_peak = lname == overall_peak_layer
 
         if is_susp:
             status_str = "[bold red]SPIKE DETECTED[/bold red]"
@@ -926,21 +1003,23 @@ def fuzz_command(
     if json_output:
         iteration_report_payload = []
         for iteration in report.iteration_reports:
-            iteration_report_payload.append({
-                "iteration": iteration.iteration,
-                "input_tag": iteration.input_tag,
-                "max_l_inf": iteration.max_l_inf,
-                "highest_layer": iteration.highest_layer,
-                "layer_stats": {
-                    layer_name: {
-                        "layer_name": stat.layer_name,
-                        "l_inf_norm": stat.l_inf_norm,
-                        "mean_activation": stat.mean_activation,
-                        "std_activation": stat.std_activation,
-                    }
-                    for layer_name, stat in iteration.layer_stats.items()
-                },
-            })
+            iteration_report_payload.append(
+                {
+                    "iteration": iteration.iteration,
+                    "input_tag": iteration.input_tag,
+                    "max_l_inf": iteration.max_l_inf,
+                    "highest_layer": iteration.highest_layer,
+                    "layer_stats": {
+                        layer_name: {
+                            "layer_name": stat.layer_name,
+                            "l_inf_norm": stat.l_inf_norm,
+                            "mean_activation": stat.mean_activation,
+                            "std_activation": stat.std_activation,
+                        }
+                        for layer_name, stat in iteration.layer_stats.items()
+                    },
+                }
+            )
 
         report_json = {
             "model_path": str(model_path.resolve()),
@@ -968,15 +1047,16 @@ def fuzz_command(
 @app.command(name="disarm")
 def disarm_command(
     model_path: Path = typer.Argument(..., help="Path to the .safetensors or .gguf model to disarm."),
-    output_path: Optional[Path] = typer.Argument(
-        None, help="Where to write the disarmed copy. Defaults to <name>.disarmed<ext> next to the input.",
+    output_path: Path | None = typer.Argument(
+        None,
+        help="Where to write the disarmed copy. Defaults to <name>.disarmed<ext> next to the input.",
     ),
     low_bits: int = typer.Option(
         DEFAULT_LOW_BITS,
         "--low-bits",
         "-k",
         help="Low mantissa bits to round away. Clamped per dtype to a safe maximum "
-             "(float32 16, float16 4, bfloat16 2) unless --allow-unsafe.",
+        "(float32 16, float16 4, bfloat16 2) unless --allow-unsafe.",
     ),
     strip_metadata: bool = typer.Option(
         False,
@@ -1010,8 +1090,11 @@ def disarm_command(
     try:
         with console.status("[bold green]Rounding low mantissa bits...[/bold green]"):
             report = disarm_file(
-                model_path, output_path, low_bits=low_bits,
-                strip_metadata=strip_metadata, allow_unsafe=allow_unsafe,
+                model_path,
+                output_path,
+                low_bits=low_bits,
+                strip_metadata=strip_metadata,
+                allow_unsafe=allow_unsafe,
             )
     except ValueError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
@@ -1024,8 +1107,12 @@ def disarm_command(
         Panel(
             f"[bold]Disarmed {report.tensors_disarmed} floating-point tensor(s)[/bold] "
             f"({report.tensors_skipped} other tensor(s) copied unchanged"
-            + (f", of which {sum(report.untreated.values())} are quantized and [bold]not treated[/bold]"
-               if report.untreated else "") + ").\n\n"
+            + (
+                f", of which {sum(report.untreated.values())} are quantized and [bold]not treated[/bold]"
+                if report.untreated
+                else ""
+            )
+            + ").\n\n"
             f"Low bits requested: [cyan]{report.low_bits}[/cyan] · applied per dtype: [cyan]{applied}[/cyan]\n"
             f"Largest per-weight relative change: [cyan]{report.max_relative_change:.3e}[/cyan]\n\n"
             f"Written to: [cyan]{output_path.resolve()}[/cyan]\n"
@@ -1039,18 +1126,26 @@ def disarm_command(
 
 @app.command(name="report-bundle")
 def report_bundle_command(
-    model_paths: List[Path] = typer.Argument(..., help="Model files to include."),
-    output_dir: Optional[Path] = typer.Option(
-        None, "--output-dir", "-o", help="Folder to create. Defaults to ./aegis-report-<name>-<timestamp>.",
+    model_paths: list[Path] = typer.Argument(..., help="Model files to include."),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Folder to create. Defaults to ./aegis-report-<name>-<timestamp>.",
     ),
-    repo_url: Optional[str] = typer.Option(
-        None, "--repo-url", help="Where the file was downloaded from. Read from a Hugging Face cache path when omitted.",
+    repo_url: str | None = typer.Option(
+        None,
+        "--repo-url",
+        help="Where the file was downloaded from. Read from a Hugging Face cache path when omitted.",
     ),
-    revision: Optional[str] = typer.Option(
-        None, "--revision", help="Commit hash of the download. Read from a Hugging Face cache path when omitted.",
+    revision: str | None = typer.Option(
+        None,
+        "--revision",
+        help="Commit hash of the download. Read from a Hugging Face cache path when omitted.",
     ),
-    engines: str = typer.Option("auto", "--engines", envvar="AEGIS_ENGINES",
-                                help="Optional engines, as for `aegis scan`."),
+    engines: str = typer.Option(
+        "auto", "--engines", envvar="AEGIS_ENGINES", help="Optional engines, as for `aegis scan`."
+    ),
 ):
     """Package findings, file hashes, the repo URL and the revision for coordinated disclosure.
 
@@ -1079,15 +1174,20 @@ def report_bundle_command(
     if output_dir.exists():
         console.print(f"[bold red]Error:[/bold red] {output_dir} already exists; choose another --output-dir.")
         raise typer.Exit(code=EXIT_ERROR)
-    write_bundle(output_dir, outcomes, to_json_document(outcomes, "medium", __version__), repo_url, revision,
-                 __version__)
+    write_bundle(
+        output_dir, outcomes, to_json_document(outcomes, "medium", __version__), repo_url, revision, __version__
+    )
     for outcome in outcomes:
         _render_verdict(outcome)
-    console.print(Panel(
-        f"Bundle written to [cyan]{output_dir.resolve()}[/cyan]\n\n"
-        "REPORT.md is a draft: review it before sending. [bold]Nothing has been sent.[/bold]\n"
-        "Where it should go is at the top of REPORT.md (SECURITY.md has the full process).",
-        title="📦 Report Bundle", border_style="cyan"))
+    console.print(
+        Panel(
+            f"Bundle written to [cyan]{output_dir.resolve()}[/cyan]\n\n"
+            "REPORT.md is a draft: review it before sending. [bold]Nothing has been sent.[/bold]\n"
+            "Where it should go is at the top of REPORT.md (SECURITY.md has the full process).",
+            title="📦 Report Bundle",
+            border_style="cyan",
+        )
+    )
 
 
 @app.command(name="doctor")
@@ -1111,6 +1211,7 @@ def doctor_command():
     # PyTorch
     if TORCH_AVAILABLE:
         import torch  # type: ignore
+
         table.add_row("PyTorch Engine", "[green]OK[/green]", f"v{torch.__version__}")
     else:
         table.add_row("PyTorch Engine", "[yellow]MISSING[/yellow]", "Install torch for dynamic Trojan fuzzing")

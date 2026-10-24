@@ -36,14 +36,16 @@ def _fuzz(*args):
 
 # --- Safetensors into a trusted architecture -----------------------------------
 
+
 @pytest.mark.claim("C12")
 def test_backdoor_in_safetensors_is_found_without_pickle(tmp_path):
     torch.manual_seed(0)
     path = tmp_path / "backdoor.safetensors"
     save_file(ThresholdBackdoor().state_dict(), str(path))
     out = tmp_path / "report.json"
-    result = _fuzz(path, "--arch", "tests.fuzz_fixtures:ThresholdBackdoor", "--input-shape", "2,10",
-                   "-n", "12", "-o", out)
+    result = _fuzz(
+        path, "--arch", "tests.fuzz_fixtures:ThresholdBackdoor", "--input-shape", "2,10", "-n", "12", "-o", out
+    )
     assert result.exit_code == 0, result.output
     report = json.loads(out.read_text())
     assert report["suspected_trojan"]
@@ -107,6 +109,7 @@ def test_full_module_pickle_is_refused_without_trust(tmp_path):
 
 
 # --- Sandboxed --trust-pickle ----------------------------------------------------
+
 
 @pytest.mark.claim("C13")
 @needs_sandbox

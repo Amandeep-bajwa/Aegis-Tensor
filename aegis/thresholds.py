@@ -5,8 +5,8 @@ record them, so a change here marks those results, and the claims that rest on t
 """
 
 DEFAULT_THRESHOLDS = {
-    "entropy": 7.92,   # pooled whole-tensor entropy, bits per byte
-    "exponent": 6.5,   # sign/exponent byte-lane entropy
-    "plane": 7.5,      # low mantissa bit-plane entropy floor
-    "benford": None,   # Benford MAD; off by default
+    "entropy": 7.92,  # pooled whole-tensor entropy, bits per byte
+    "exponent": 6.5,  # sign/exponent byte-lane entropy
+    "plane": 7.5,  # low mantissa bit-plane entropy floor
+    "benford": None,  # Benford MAD; off by default
 }

@@ -44,11 +44,11 @@ def _rewrite_header(path: Path, mutate) -> None:
     """Apply `mutate` to the parsed JSON header and rewrite the file, keeping the data bytes."""
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    header = json.loads(raw[8:8 + n])
+    header = json.loads(raw[8 : 8 + n])
     header = mutate(header)
     blob = json.dumps(header, separators=(",", ":")).encode()
     blob += b" " * ((-len(blob)) % 8)
-    path.write_bytes(struct.pack("<Q", len(blob)) + blob + raw[8 + n:])
+    path.write_bytes(struct.pack("<Q", len(blob)) + blob + raw[8 + n :])
 
 
 def _tensors(path: Path) -> dict:
@@ -56,6 +56,7 @@ def _tensors(path: Path) -> dict:
 
 
 # --- Tensor-level threats -----------------------------------------------------
+
 
 @pytest.mark.claim("C06")
 @needs_core
@@ -117,13 +118,15 @@ def test_t04_partial_overwrite_of_one_percent_is_flagged(tmp_path):
 
 @needs_core
 def test_t08_clean_model_has_no_findings_in_any_channel(tmp_path):
-    path = _write(tmp_path / "clean.safetensors", {f"l{i}.weight": _weights(i) for i in range(4)},
-                  metadata={"format": "pt"})
+    path = _write(
+        tmp_path / "clean.safetensors", {f"l{i}.weight": _weights(i) for i in range(4)}, metadata={"format": "pt"}
+    )
     assert all(not r.is_suspicious for r in scan_safetensors(str(path)))
     assert not scan_safetensors_header(path).is_suspicious
 
 
 # --- Container and header channels --------------------------------------------
+
 
 @pytest.mark.claim("C07")
 def test_t05_payload_in_metadata_is_flagged_and_stripped(tmp_path):
@@ -144,9 +147,9 @@ def test_t06_whitespace_channel_in_header_is_flagged(tmp_path):
     _rewrite_header(path, lambda h: h)  # re-serialise to the canonical form
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    header = raw[8:8 + n].rstrip(b" ")
+    header = raw[8 : 8 + n].rstrip(b" ")
     padded = header + b" " * 5000
-    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     result = scan_safetensors_header(path)
     assert result.is_suspicious
     assert result.findings[0].channel == "header_whitespace"
@@ -170,6 +173,7 @@ def test_t09_truncated_file_is_rejected_not_silently_scanned(tmp_path):
 
 
 # --- Pickle-container threats --------------------------------------------------
+
 
 class _Exec:
     """Pickles as os.system(...). The payload only writes a marker file."""
@@ -230,6 +234,7 @@ def test_t14_torchscript_is_refused_with_explanation(tmp_path):
 
 # --- Behavioural threats (sleeper / trigger backdoors) -------------------------
 
+
 class _ThresholdBackdoor(nn.Module):
     """Dormant trigger: a large input on feature 0 amplifies the hidden layer by 50x."""
 
@@ -283,7 +288,7 @@ def test_t17_nan_and_inf_injection_is_flagged(tmp_path):
     w = _weights(17, 1 << 16)
     idx = np.random.default_rng(17).choice(w.size, w.size // 200, replace=False)
     w[idx[: len(idx) // 2]] = np.nan
-    w[idx[len(idx) // 2:]] = np.inf
+    w[idx[len(idx) // 2 :]] = np.inf
     path = _write(tmp_path / "m.safetensors", {"layer.weight": w})
     result = _tensors(path)["layer.weight"]
     assert result.is_suspicious
@@ -303,7 +308,7 @@ def test_t18_scan_output_names_the_metadata_payload_and_its_treatment(tmp_path):
 @pytest.mark.xfail(
     strict=True,
     reason="Known gap: tensors under 256 elements are below the sample floor, so a payload "
-           "split into many tiny tensors is not flagged. Strict, so closing the gap will be noticed.",
+    "split into many tiny tensors is not flagged. Strict, so closing the gap will be noticed.",
 )
 @pytest.mark.claim("L02")
 def test_t19_payload_split_into_tiny_tensors_is_flagged(tmp_path):

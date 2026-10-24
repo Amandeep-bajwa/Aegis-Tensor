@@ -58,6 +58,7 @@ ATTACKS = ("badnets", "blended", "wanet", "clean_label")
 
 # --- Data ------------------------------------------------------------------------
 
+
 def load_cifar() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str]:
     """uint8 NHWC images and int labels, decoded once and cached."""
     from huggingface_hub import HfApi, hf_hub_download
@@ -71,8 +72,13 @@ def load_cifar() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str]:
     from PIL import Image
 
     def read(split):
-        path = hf_hub_download(CIFAR_REPO, f"plain_text/{split}-00000-of-00001.parquet", repo_type="dataset",
-                               revision=sha, cache_dir=str(CACHE))
+        path = hf_hub_download(
+            CIFAR_REPO,
+            f"plain_text/{split}-00000-of-00001.parquet",
+            repo_type="dataset",
+            revision=sha,
+            cache_dir=str(CACHE),
+        )
         table = pq.read_table(path).to_pylist()
         x = np.stack([np.array(Image.open(io.BytesIO(r["img"]["bytes"])).convert("RGB")) for r in table])
         return x.astype(np.uint8), np.array([r["label"] for r in table], dtype=np.int64)
@@ -85,6 +91,7 @@ def load_cifar() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str]:
 
 
 # --- Model -------------------------------------------------------------------------
+
 
 class GapNet(nn.Module):
     """Takes images in [0, 1], NCHW. Normalisation is inside the model so every detector
@@ -99,9 +106,14 @@ class GapNet(nn.Module):
             return nn.Sequential(nn.Conv2d(cin, cout, 3, padding=1, bias=False), nn.BatchNorm2d(cout), nn.ReLU())
 
         self.features = nn.Sequential(
-            block(3, 32), block(32, 32), nn.MaxPool2d(2),
-            block(32, 64), block(64, 64), nn.MaxPool2d(2),
-            block(64, 128), block(128, 128),
+            block(3, 32),
+            block(32, 32),
+            nn.MaxPool2d(2),
+            block(32, 64),
+            block(64, 64),
+            nn.MaxPool2d(2),
+            block(64, 128),
+            block(128, 128),
         )
         self.classifier = nn.Linear(128, 10)
 
@@ -115,10 +127,18 @@ def to_keras(model: GapNet):
     """Exact Keras copy of a trained GapNet (NHWC input in [0, 1], softmax output)."""
     import keras
 
-    layers = [keras.Input((32, 32, 3)), keras.layers.Normalization(mean=MEAN, variance=STD ** 2)]
+    layers = [keras.Input((32, 32, 3)), keras.layers.Normalization(mean=MEAN, variance=STD**2)]
     convs = []
-    for stage in (model.features[0], model.features[1], "pool", model.features[3], model.features[4], "pool",
-                  model.features[6], model.features[7]):
+    for stage in (
+        model.features[0],
+        model.features[1],
+        "pool",
+        model.features[3],
+        model.features[4],
+        "pool",
+        model.features[6],
+        model.features[7],
+    ):
         if stage == "pool":
             layers.append(keras.layers.MaxPooling2D(2))
             continue
@@ -146,6 +166,7 @@ def to_keras(model: GapNet):
 
 # --- Triggers and poisoning -----------------------------------------------------------
 
+
 def _pattern(seed: int = 1234) -> np.ndarray:
     return np.random.default_rng(seed).integers(0, 256, (32, 32, 3), dtype=np.uint8)
 
@@ -170,7 +191,7 @@ def _warp(x: np.ndarray, grid: torch.Tensor) -> np.ndarray:
 def _corners(x: np.ndarray) -> np.ndarray:
     x = x.copy()
     for r, c in ((0, 0), (0, 29), (29, 0), (29, 29)):
-        x[:, r:r + 3, c:c + 3] = 255
+        x[:, r : r + 3, c : c + 3] = 255
     return x
 
 
@@ -196,7 +217,7 @@ def poison(attack: str, x: np.ndarray, y: np.ndarray, rng: np.random.Generator, 
         x[idx], y[idx] = apply_trigger(attack, x[idx]), TARGET
     elif attack == "wanet":
         order = rng.permutation(len(y))
-        poisoned, cross = order[: int(0.10 * len(y))], order[int(0.10 * len(y)): int(0.30 * len(y))]
+        poisoned, cross = order[: int(0.10 * len(y))], order[int(0.10 * len(y)) : int(0.30 * len(y))]
         x[poisoned], y[poisoned] = _warp(x[poisoned], _warp_grid()), TARGET
         gen = torch.Generator().manual_seed(int(rng.integers(1 << 30)))
         noisy = torch.clamp(_warp_grid() + (torch.rand(1, 32, 32, 2, generator=gen) * 2 - 1) / 32, -1, 1)
@@ -214,19 +235,20 @@ def _pgd(model: nn.Module, x: np.ndarray, y: np.ndarray, eps=16 / 255, step=2 / 
     model = model.eval()
     out = []
     for start in range(0, len(x), 256):
-        xb = torch.from_numpy(x[start:start + 256]).float().permute(0, 3, 1, 2) / 255
-        yb = torch.from_numpy(y[start:start + 256])
+        xb = torch.from_numpy(x[start : start + 256]).float().permute(0, 3, 1, 2) / 255
+        yb = torch.from_numpy(y[start : start + 256])
         adv = xb.clone()
         for _ in range(iters):
             adv.requires_grad_(True)
             loss = F.cross_entropy(model(adv), yb)
-            grad, = torch.autograd.grad(loss, adv)
+            (grad,) = torch.autograd.grad(loss, adv)
             adv = (adv.detach() + step * grad.sign()).clamp(xb - eps, xb + eps).clamp(0, 1)
         out.append((adv.permute(0, 2, 3, 1).numpy() * 255).round().astype(np.uint8))
     return np.concatenate(out)
 
 
 # --- Training and metrics --------------------------------------------------------------
+
 
 def train(x: np.ndarray, y: np.ndarray, seed: int, epochs: int, device: str) -> GapNet:
     torch.manual_seed(seed)
@@ -241,12 +263,12 @@ def train(x: np.ndarray, y: np.ndarray, seed: int, epochs: int, device: str) -> 
         model.train()
         order = torch.randperm(len(xt), generator=gen)
         for start in range(0, len(xt), 256):
-            idx = order[start:start + 256]
+            idx = order[start : start + 256]
             xb = xt[idx].float().div(255)
             # augmentation: random crop with 4-pixel padding and horizontal flip
             xb = F.pad(xb, (4, 4, 4, 4), mode="reflect")
             i, j = torch.randint(0, 9, (2,), generator=gen).tolist()
-            xb = xb[:, :, i:i + 32, j:j + 32]
+            xb = xb[:, :, i : i + 32, j : j + 32]
             if torch.rand(1, generator=gen).item() < 0.5:
                 xb = xb.flip(3)
             xb, yb = xb.to(device), yt[idx].to(device)
@@ -262,20 +284,25 @@ def train(x: np.ndarray, y: np.ndarray, seed: int, epochs: int, device: str) -> 
 def predict(model: nn.Module, x: np.ndarray) -> np.ndarray:
     preds = []
     for start in range(0, len(x), 512):
-        xb = torch.from_numpy(x[start:start + 512]).float().permute(0, 3, 1, 2) / 255
+        xb = torch.from_numpy(x[start : start + 512]).float().permute(0, 3, 1, 2) / 255
         preds.append(model(xb).argmax(-1).numpy())
     return np.concatenate(preds)
 
 
 # --- Detectors ---------------------------------------------------------------------------
 
+
 def detect_aegis(model: nn.Module, iterations: int) -> dict:
     from aegis.fuzzer import DynamicTrojanFuzzer
 
     report = DynamicTrojanFuzzer(model, spike_threshold=4.0).run_fuzzing(
-        input_shape=(1, 3, 32, 32), num_iterations=iterations, seed=0)
-    return {"flagged": bool(report.suspected_trojan), "spike_ratio": round(report.spike_ratio, 3),
-            "layers": report.suspicious_layers}
+        input_shape=(1, 3, 32, 32), num_iterations=iterations, seed=0
+    )
+    return {
+        "flagged": bool(report.suspected_trojan),
+        "spike_ratio": round(report.spike_ratio, 3),
+        "layers": report.suspicious_layers,
+    }
 
 
 def detect_neural_cleanse(model: GapNet, x_val: np.ndarray, y_val: np.ndarray, steps: int) -> dict:
@@ -298,17 +325,21 @@ def detect_strip(model: nn.Module, x_clean_ref: np.ndarray, x_clean: np.ndarray,
     # STRIP measures the entropy of predicted probabilities, so it needs a softmax output;
     # on raw logits the entropies are NaN.
     probabilities = nn.Sequential(model, nn.Softmax(dim=1)).eval()
-    clf = PyTorchClassifier(probabilities, loss=nn.NLLLoss(), input_shape=(3, 32, 32), nb_classes=10,
-                            clip_values=(0, 1))
+    clf = PyTorchClassifier(
+        probabilities, loss=nn.NLLLoss(), input_shape=(3, 32, 32), nb_classes=10, clip_values=(0, 1)
+    )
     as_float = lambda a: (a.astype(np.float32) / 255).transpose(0, 3, 1, 2)
     defended = STRIP(clf)(num_samples=20, false_acceptance_rate=0.05)
     defended.mitigate(as_float(x_clean_ref))
     abstain = lambda preds: float(np.mean(np.all(preds == 0, axis=1)))  # STRIP abstains with all-zero output
-    return {"input_detection_rate": round(abstain(defended.predict(as_float(x_triggered))), 4),
-            "input_false_positive_rate": round(abstain(defended.predict(as_float(x_clean))), 4)}
+    return {
+        "input_detection_rate": round(abstain(defended.predict(as_float(x_triggered))), 4),
+        "input_false_positive_rate": round(abstain(defended.predict(as_float(x_clean))), 4),
+    }
 
 
 # --- Report ------------------------------------------------------------------------------
+
 
 def _rate(hits: int, total: int) -> str:
     if total == 0:
@@ -355,9 +386,11 @@ def render(results: list[dict], meta: dict) -> str:
             continue
         mean = lambda key: sum(r[key] for r in rows) / len(rows)
         asr = "—" if attack == "clean" else f"{mean('asr'):.1%}"
-        lines.append(f"| {attack} | {len(rows)} | {mean('clean_acc'):.1%} | {asr} | "
-                     f"{sum(r['aegis']['flagged'] for r in rows)}/{len(rows)} | "
-                     f"{sum(r['nc']['flagged'] for r in rows)}/{len(rows)} |")
+        lines.append(
+            f"| {attack} | {len(rows)} | {mean('clean_acc'):.1%} | {asr} | "
+            f"{sum(r['aegis']['flagged'] for r in rows)}/{len(rows)} | "
+            f"{sum(r['nc']['flagged'] for r in rows)}/{len(rows)} |"
+        )
     lines += [
         "",
         "## Input-level detection (ART STRIP)",
@@ -371,8 +404,10 @@ def render(results: list[dict], meta: dict) -> str:
     for attack in ATTACKS:
         rows = [r for r in implanted if r["attack"] == attack and r.get("strip")]
         if rows:
-            lines.append(f"| {attack} | {sum(r['strip']['input_detection_rate'] for r in rows) / len(rows):.1%} | "
-                         f"{sum(r['strip']['input_false_positive_rate'] for r in rows) / len(rows):.1%} |")
+            lines.append(
+                f"| {attack} | {sum(r['strip']['input_detection_rate'] for r in rows) / len(rows):.1%} | "
+                f"{sum(r['strip']['input_false_positive_rate'] for r in rows) / len(rows):.1%} |"
+            )
     lines += [
         "",
         "## Per model",
@@ -382,10 +417,12 @@ def render(results: list[dict], meta: dict) -> str:
     ]
     for r in results:
         asr = "—" if r["attack"] == "clean" else f"{r['asr']:.1%}"
-        lines.append(f"| {r['attack']} | {r['seed']} | {r['clean_acc']:.1%} | {asr} | "
-                     f"{'flagged' if r['aegis']['flagged'] else 'clean'} | {r['aegis']['spike_ratio']} | "
-                     f"{'flagged' if r['nc']['flagged'] else 'clean'} | "
-                     f"{', '.join(f'{c} ({a:.1f})' for c, a in r['nc']['classes']) or '—'} |")
+        lines.append(
+            f"| {r['attack']} | {r['seed']} | {r['clean_acc']:.1%} | {asr} | "
+            f"{'flagged' if r['aegis']['flagged'] else 'clean'} | {r['aegis']['spike_ratio']} | "
+            f"{'flagged' if r['nc']['flagged'] else 'clean'} | "
+            f"{', '.join(f'{c} ({a:.1f})' for c, a in r['nc']['classes']) or '—'} |"
+        )
     if failed:
         lines += ["", "## Attacks that did not implant (excluded from TPR)", ""]
         lines += [f"- {r['attack']} seed {r['seed']}: ASR {r['asr']:.1%}" for r in failed]
@@ -405,6 +442,7 @@ def render(results: list[dict], meta: dict) -> str:
 
 
 # --- Main ------------------------------------------------------------------------------
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -426,10 +464,16 @@ def main() -> int:
     val_idx = rng_val.choice(len(xte), 1000, replace=False)
     test_mask = np.ones(len(xte), bool)
     test_mask[val_idx] = False
-    x_val, y_val = xte[val_idx], yte[val_idx]           # clean data available to defenders
-    x_test, y_test = xte[test_mask], yte[test_mask]     # held out for accuracy and ASR
-    meta = {"cifar_sha": sha, "epochs": args.epochs, "nc_steps": args.nc_steps, "art": art.__version__,
-            "fuzz_iterations": args.fuzz_iterations, "min_asr": args.min_asr}
+    x_val, y_val = xte[val_idx], yte[val_idx]  # clean data available to defenders
+    x_test, y_test = xte[test_mask], yte[test_mask]  # held out for accuracy and ASR
+    meta = {
+        "cifar_sha": sha,
+        "epochs": args.epochs,
+        "nc_steps": args.nc_steps,
+        "art": art.__version__,
+        "fuzz_iterations": args.fuzz_iterations,
+        "min_asr": args.min_asr,
+    }
 
     results = json.loads(args.results.read_text()) if args.results.exists() else []
     done = {(r["attack"], r["seed"]) for r in results}
@@ -449,22 +493,27 @@ def main() -> int:
         xp, yp = poison(attack, xtr, ytr, np.random.default_rng(1000 + seed), reference)
         model = train(xp, yp, seed=seed, epochs=args.epochs, device=args.device)
         torch.save(model.state_dict(), MODEL_DIR / f"{attack}_seed{seed}.pt")
-        record = {"attack": attack, "seed": seed,
-                  "clean_acc": float((predict(model, x_test) == y_test).mean())}
+        record = {"attack": attack, "seed": seed, "clean_acc": float((predict(model, x_test) == y_test).mean())}
         non_target = y_test != TARGET
         if attack != "clean":
             triggered = apply_trigger(attack, x_test[non_target])
             record["asr"] = float((predict(model, triggered) == TARGET).mean())
-        print(f"   trained: clean acc {record['clean_acc']:.3f}" +
-              (f", ASR {record['asr']:.3f}" if "asr" in record else ""), flush=True)
+        print(
+            f"   trained: clean acc {record['clean_acc']:.3f}"
+            + (f", ASR {record['asr']:.3f}" if "asr" in record else ""),
+            flush=True,
+        )
         record["aegis"] = detect_aegis(model, args.fuzz_iterations)
         record["nc"] = detect_neural_cleanse(model, x_val, y_val, args.nc_steps)
         if attack != "clean" and record["asr"] >= args.min_asr:
             sample = x_test[non_target][:500]
             record["strip"] = detect_strip(model, x_val, sample, apply_trigger(attack, sample))
         record["seconds"] = round(time.time() - started)
-        print(f"   aegis {record['aegis']['flagged']} (ratio {record['aegis']['spike_ratio']}), "
-              f"NC {record['nc']['flagged']}, {record['seconds']}s", flush=True)
+        print(
+            f"   aegis {record['aegis']['flagged']} (ratio {record['aegis']['spike_ratio']}), "
+            f"NC {record['nc']['flagged']}, {record['seconds']}s",
+            flush=True,
+        )
         results.append(record)
         args.results.parent.mkdir(parents=True, exist_ok=True)
         args.results.write_text(json.dumps(results, indent=1) + "\n")

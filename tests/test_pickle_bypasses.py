@@ -7,7 +7,6 @@ import os
 import pickle
 import struct
 import zipfile
-import zlib
 
 import numpy as np
 import pytest
@@ -34,11 +33,22 @@ def memo_assembled_system(marker) -> bytes:
     """
     return (
         b"\x80\x04"
-        + _u("os") + b"\x94" + _u("system") + b"\x94"   # MEMOIZE -> memo 0, 1
-        + _u("torch") + b"\x94" + _u("nn") + b"\x94"    # decoys
-        + b"00"                                         # POP, POP
-        + b"h\x00" + b"h\x01" + b"\x93"                 # BINGET 0, BINGET 1, STACK_GLOBAL
-        + _u(f"touch {marker}") + b"\x85" + b"R" + b"." # TUPLE1, REDUCE, STOP
+        + _u("os")
+        + b"\x94"
+        + _u("system")
+        + b"\x94"  # MEMOIZE -> memo 0, 1
+        + _u("torch")
+        + b"\x94"
+        + _u("nn")
+        + b"\x94"  # decoys
+        + b"00"  # POP, POP
+        + b"h\x00"
+        + b"h\x01"
+        + b"\x93"  # BINGET 0, BINGET 1, STACK_GLOBAL
+        + _u(f"touch {marker}")
+        + b"\x85"
+        + b"R"
+        + b"."  # TUPLE1, REDUCE, STOP
     )
 
 
@@ -60,6 +70,7 @@ def _write(path, data: bytes):
 
 # --- (b) stack and memo simulation ---------------------------------------------
 
+
 @pytest.mark.claim("C01", "C03")
 def test_memo_assembled_os_system_is_resolved(tmp_path, marker):
     result = scan_pickle_file(_write(tmp_path / "m.pkl", memo_assembled_system(marker)))
@@ -75,11 +86,17 @@ def test_long_binput_and_get_variants_are_resolved(tmp_path, marker):
     # PUT/GET (protocol 0 text), BINPUT/BINGET and LONG_BINPUT/LONG_BINGET memo opcodes.
     payload = (
         b"\x80\x04"
-        + _u("subprocess") + b"p7\n"                      # PUT 7
-        + _u("check_call") + b"r\x00\x01\x00\x00"         # LONG_BINPUT 256
-        + b"0" + b"0"
-        + b"g7\n" + b"j\x00\x01\x00\x00" + b"\x93"        # GET 7, LONG_BINGET 256, STACK_GLOBAL
-        + b"N" + b"."
+        + _u("subprocess")
+        + b"p7\n"  # PUT 7
+        + _u("check_call")
+        + b"r\x00\x01\x00\x00"  # LONG_BINPUT 256
+        + b"0"
+        + b"0"
+        + b"g7\n"
+        + b"j\x00\x01\x00\x00"
+        + b"\x93"  # GET 7, LONG_BINGET 256, STACK_GLOBAL
+        + b"N"
+        + b"."
     )
     result = scan_pickle_file(_write(tmp_path / "m.pkl", payload))
     assert "subprocess.check_call" in result.globals_seen
@@ -105,6 +122,7 @@ def test_protocol_0_global_is_detected(tmp_path, marker):
 
 
 # --- (a) routing by magic bytes -----------------------------------------------
+
 
 @pytest.mark.claim("C01", "C02")
 def test_renamed_extension_is_routed_by_magic_bytes(tmp_path, marker):
@@ -168,6 +186,7 @@ def test_payload_behind_junk_prefix_is_found_by_best_effort_scan(tmp_path, marke
 
 # --- (c) continue past malformed opcodes --------------------------------------
 
+
 @pytest.mark.claim("C01", "C03")
 def test_broken_stream_after_payload(tmp_path, marker):
     payload = memo_assembled_system(marker)[:-1] + b"\xff\xfe broken tail"
@@ -195,8 +214,14 @@ def test_legacy_torch_format_is_clean_and_its_storage_tail_is_not_parsed(tmp_pat
 @pytest.mark.claim("C02")
 def test_payload_in_legacy_torch_object_pickle_is_found(tmp_path, marker):
     magic = pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
-    path = _write(tmp_path / "legacy.pt", magic + pickle.dumps(1001, protocol=2) + pickle.dumps({}, protocol=2)
-                  + memo_assembled_system(marker) + pickle.dumps([], protocol=2))
+    path = _write(
+        tmp_path / "legacy.pt",
+        magic
+        + pickle.dumps(1001, protocol=2)
+        + pickle.dumps({}, protocol=2)
+        + memo_assembled_system(marker)
+        + pickle.dumps([], protocol=2),
+    )
     result = scan_pickle_file(path)
     assert result.format == "pytorch-legacy"
     assert any(f.code == "dangerous_import" and "os.system" in f.message for f in result.findings), result.findings
@@ -218,6 +243,7 @@ def test_payload_in_legacy_tar_checkpoint_is_found(tmp_path, marker):
 
 
 # --- (d) tampered zip entries -------------------------------------------------
+
 
 def _torch_style_zip(payload: bytes) -> bytes:
     buffer = io.BytesIO()

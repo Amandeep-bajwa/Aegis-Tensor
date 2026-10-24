@@ -8,7 +8,6 @@ reached through filters, or taken from model-supplied variables such as eos_toke
 import pytest
 
 from aegis.templatescan import check_template
-
 from tests.test_model_formats import _scan_json, gguf_bytes
 
 CHATML = (
@@ -76,7 +75,7 @@ def test_templates_that_load_other_templates_cannot_be_verified():
 def test_template_analysis_never_renders(tmp_path):
     marker = tmp_path / "rendered"
     # Would create the marker if rendered in an unsandboxed environment; parsing alone must not.
-    template = ("{{ cycler.__init__.__globals__.os.popen('touch " + str(marker) + "').read() }}")
+    template = "{{ cycler.__init__.__globals__.os.popen('touch " + str(marker) + "').read() }}"
     assert check_template(template)
     assert not marker.exists()
 
@@ -84,8 +83,12 @@ def test_template_analysis_never_renders(tmp_path):
 @pytest.mark.claim("C04")
 def test_obfuscated_gguf_template_is_critical(tmp_path):
     path = tmp_path / "evil.gguf"
-    path.write_bytes(gguf_bytes([("tokenizer.chat_template", BYPASSES["concatenated_name"].replace(
-        "{{ cycler.__init__ if false }}", ""))], []))
+    path.write_bytes(
+        gguf_bytes(
+            [("tokenizer.chat_template", BYPASSES["concatenated_name"].replace("{{ cycler.__init__ if false }}", ""))],
+            [],
+        )
+    )
     code, entry = _scan_json(path)
     assert code == 1
     assert entry["findings"][0]["rule"] == "AEGIS-G001" and entry["findings"][0]["severity"] == "critical"

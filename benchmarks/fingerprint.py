@@ -18,8 +18,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # What decides findings on safetensors and GGUF files: tensor rules (Rust), header rules,
 # the GGUF parser, template analysis and the default thresholds.
-SCAN_SOURCES = ["src/lib.rs", "aegis/formatscan.py", "aegis/modelformats.py",
-                "aegis/templatescan.py", "aegis/thresholds.py"]
+SCAN_SOURCES = [
+    "src/lib.rs",
+    "aegis/formatscan.py",
+    "aegis/modelformats.py",
+    "aegis/templatescan.py",
+    "aegis/thresholds.py",
+]
 DISARM_SOURCES = ["aegis/disarm.py"]
 
 
@@ -43,8 +48,11 @@ def _normalise_python(text: str) -> str:
         if token.type == tokenize.COMMENT:
             cuts.append((position(token.start), position(token.end)))
             continue
-        if (token.type == tokenize.STRING and previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
-                and following in (tokenize.NEWLINE, tokenize.COMMENT, tokenize.ENDMARKER)):
+        if (
+            token.type == tokenize.STRING
+            and previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+            and following in (tokenize.NEWLINE, tokenize.COMMENT, tokenize.ENDMARKER)
+        ):
             cuts.append((position(token.start), position(token.end)))
         previous = token.type
     kept, cursor = [], 0

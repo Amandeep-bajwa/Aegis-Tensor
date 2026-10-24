@@ -3,15 +3,13 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from aegis.cli import app, get_risk_badge
-from aegis.fuzzer import TrojanScanReport, FuzzIterationReport, LayerActivationStat
-
+from aegis.fuzzer import FuzzIterationReport, LayerActivationStat, TrojanScanReport
 
 runner = CliRunner()
 ANSI_REGEX = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\([a-zA-Z]")
@@ -163,16 +161,25 @@ def test_cli_fuzz_mocked_execution(tmp_path):
     )
 
     with patch("aegis.modelload.fuzz_model", return_value=fake_report) as mock_fuzz:
-        res = runner.invoke(app, [
-            "fuzz",
-            str(model_file),
-            "--arch", "torch.nn:Linear",
-            "--arch-kwargs", '{"in_features": 10, "out_features": 2}',
-            "--input-shape", "1,10",
-            "--iterations", "5",
-            "--spike-threshold", "4.0",
-            "--output-json", str(json_out),
-        ])
+        res = runner.invoke(
+            app,
+            [
+                "fuzz",
+                str(model_file),
+                "--arch",
+                "torch.nn:Linear",
+                "--arch-kwargs",
+                '{"in_features": 10, "out_features": 2}',
+                "--input-shape",
+                "1,10",
+                "--iterations",
+                "5",
+                "--spike-threshold",
+                "4.0",
+                "--output-json",
+                str(json_out),
+            ],
+        )
         assert mock_fuzz.call_args.kwargs["input_shape"] == (1, 10)
 
         assert res.exit_code == 0

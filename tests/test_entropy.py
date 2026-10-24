@@ -1,13 +1,14 @@
 """Tests for Shannon Entropy and Benford's Law in aegis_core."""
 
-import pytest
 import numpy as np
+import pytest
+
 from aegis import (
     CORE_AVAILABLE,
+    benford_law_mad,
     mantissa_bit_plane_entropy,
     shannon_entropy_bytes,
     shannon_entropy_chunked,
-    benford_law_mad,
 )
 
 

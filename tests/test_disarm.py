@@ -76,11 +76,14 @@ def test_bfloat16_file_with_default_width_is_clamped_not_rejected(tmp_path):
 
 def test_mixed_dtype_file_gets_per_dtype_widths(tmp_path):
     src, dst = tmp_path / "mixed.safetensors", tmp_path / "out.safetensors"
-    save_file({
-        "a": torch.randn(256),
-        "b": torch.randn(256).to(torch.float16),
-        "c": torch.randn(256).to(torch.bfloat16),
-    }, str(src))
+    save_file(
+        {
+            "a": torch.randn(256),
+            "b": torch.randn(256).to(torch.float16),
+            "c": torch.randn(256).to(torch.bfloat16),
+        },
+        str(src),
+    )
     report = disarm_file(src, dst, low_bits=8)
     assert report.effective_low_bits == {"float32": 8, "float16": 4, "bfloat16": 2}
 
@@ -152,6 +155,7 @@ def test_disarm_file_skips_integer_tensors(tmp_path):
 
 # --- Format coverage and edge cases (numpy core, no torch needed) -------------------
 
+
 def test_largest_finite_values_do_not_round_up_to_infinity():
     from aegis.disarm import round_bits
 
@@ -169,11 +173,11 @@ def test_disarm_rewrites_a_whitespace_padded_header_compactly(tmp_path):
     save_file({"w": torch.randn(256)}, str(src))
     raw = src.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    padded = raw[8:8 + n].rstrip() + b" " * 4096  # a 4 KiB whitespace channel
-    src.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    padded = raw[8 : 8 + n].rstrip() + b" " * 4096  # a 4 KiB whitespace channel
+    src.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     disarm_file(src, dst)
     (m,) = struct.unpack("<Q", dst.read_bytes()[:8])
-    assert m < 200 and json.loads(dst.read_bytes()[8:8 + m])["w"]["dtype"] == "F32"
+    assert m < 200 and json.loads(dst.read_bytes()[8 : 8 + m])["w"]["dtype"] == "F32"
 
 
 @pytest.mark.claim("C09")
@@ -187,9 +191,12 @@ def test_gguf_float_tensors_are_disarmed_and_everything_else_is_kept(tmp_path):
     f16 = rng.normal(0, 0.02, 4096).astype(np.float16)
     q4 = rng.integers(0, 256, 2304, dtype=np.uint8).tobytes()  # Q4_0 blocks
     src, dst = tmp_path / "m.gguf", tmp_path / "m.disarmed.gguf"
-    src.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
-                               [("norm", [4096], 0, f32.tobytes()), ("emb", [4096], 1, f16.tobytes()),
-                                ("blk.0.ffn", [4096], 2, q4)]))
+    src.write_bytes(
+        gguf_bytes(
+            [("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
+            [("norm", [4096], 0, f32.tobytes()), ("emb", [4096], 1, f16.tobytes()), ("blk.0.ffn", [4096], 2, q4)],
+        )
+    )
     report = disarm_file(src, dst)
     assert report.format == "gguf" and report.tensors_disarmed == 2
     assert report.effective_low_bits == {"float32": 8, "float16": 4}
@@ -202,7 +209,7 @@ def test_gguf_float_tensors_are_disarmed_and_everything_else_is_kept(tmp_path):
     norm = np.frombuffer(out, np.uint32, 4096, start + infos[0][3])
     emb = np.frombuffer(out, np.uint16, 4096, start + infos[1][3])
     assert np.all(norm & 0xFF == 0) and np.all(emb & 0xF == 0)
-    assert out[start + infos[2][3]:start + infos[2][3] + len(q4)] == q4
+    assert out[start + infos[2][3] : start + infos[2][3] + len(q4)] == q4
 
 
 def test_disarm_runs_without_torch(tmp_path):
@@ -212,10 +219,12 @@ def test_disarm_runs_without_torch(tmp_path):
 
     src = tmp_path / "m.safetensors"
     save_file({"w": torch.randn(256)}, str(src))
-    code = ("import sys; sys.modules['torch'] = None\n"
-            "from aegis.disarm import disarm_file\n"
-            f"r = disarm_file({str(src)!r}, {str(tmp_path / 'o.safetensors')!r})\n"
-            "assert r.tensors_disarmed == 1\n")
+    code = (
+        "import sys; sys.modules['torch'] = None\n"
+        "from aegis.disarm import disarm_file\n"
+        f"r = disarm_file({str(src)!r}, {str(tmp_path / 'o.safetensors')!r})\n"
+        "assert r.tensors_disarmed == 1\n"
+    )
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
     assert result.returncode == 0, result.stderr
