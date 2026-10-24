@@ -133,7 +133,8 @@ def check_template(text: str) -> list[Issue]:
     except ImportError:  # pragma: no cover - jinja2 is a dependency; kept for minimal installs
         return _regex_fallback(text)
     try:
-        tree = Environment(extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"]).parse(text)
+        # Parse only: the template is never compiled or rendered, so autoescaping does not apply.
+        tree = Environment(extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"]).parse(text)  # noqa: S701
     except TemplateSyntaxError as error:
         return [("unverifiable", f"chat template does not parse as Jinja ({error.message}, line {error.lineno})")]
     return _Analyzer(nodes, tree).run()
@@ -172,7 +173,7 @@ class _Analyzer:
             elif isinstance(node, n.For):
                 self._bind(node.target, node.iter)
             elif isinstance(node, n.With):
-                for target, value in zip(node.targets, node.values):
+                for target, value in zip(node.targets, node.values, strict=False):
                     self._bind(target, value)
             elif isinstance(node, n.Macro):
                 macros[node.name] = node
@@ -180,12 +181,13 @@ class _Analyzer:
                 for index, default in enumerate(node.defaults):
                     self._bind(node.args[offset + index], default)
             elif isinstance(node, n.CallBlock):
-                for arg, default in zip(reversed(node.args), reversed(node.defaults)):
+                # Only trailing parameters have defaults, so the lengths differ by design.
+                for arg, default in zip(reversed(node.args), reversed(node.defaults), strict=False):
                     self._bind(arg, default)
         for call in self.tree.find_all(n.Call):  # macro arguments are bound at each call site
             if isinstance(call.node, n.Name) and call.node.name in macros:
                 params = macros[call.node.name].args
-                for param, value in zip(params, call.args):
+                for param, value in zip(params, call.args, strict=False):  # a call may pass fewer arguments
                     self._bind(param, value)
                 for keyword in call.kwargs:
                     for param in params:
@@ -333,4 +335,4 @@ _REGEX_FALLBACK = [
 def _regex_fallback(text: str) -> list[Issue]:
     hits = [label for pattern, label in _REGEX_FALLBACK if pattern.search(text)]
     issues = [("injection", "chat template uses " + ", ".join(hits))] if hits else []
-    return issues + [("unverifiable", "jinja2 is not installed, so only a text match was possible")]
+    return [*issues, ("unverifiable", "jinja2 is not installed, so only a text match was possible")]

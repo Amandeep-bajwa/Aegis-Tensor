@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ def _sandbox_available() -> bool:
     from aegis.sandbox import SandboxUnavailable, sandbox_prefix
 
     try:
-        sandbox_prefix("/tmp")
+        sandbox_prefix(tempfile.gettempdir())
         return True
     except SandboxUnavailable:
         return False

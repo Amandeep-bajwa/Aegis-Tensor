@@ -456,23 +456,24 @@ def _scan_tar(data, result: PickleScanResult, label: str, depth: int) -> None:
     """Legacy torch.save tar: 'pickle' and 'sys_info' are pickles; 'storages' and
     'tensors' start with pickles followed by raw bytes."""
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(bytes(data)), mode="r:")
+        archive = tarfile.open(fileobj=io.BytesIO(bytes(data)), mode="r:")  # noqa: SIM115 - closed below
         members = [m for m in archive.getmembers() if m.isfile()]
     except (tarfile.TarError, OSError) as error:
         result.add("SUSPICIOUS", f"tar archive unreadable ({error})", label, code="container_unreadable")
         return
-    for member in members:
-        handle = archive.extractfile(member)
-        if handle is None:
-            continue
-        payload = handle.read()  # read into memory; nothing is written to disk
-        where = f"{label}:{member.name}"
-        if member.name in ("pickle", "sys_info"):
-            _scan_pickle_stream(payload, result, where)
-        elif member.name in ("storages", "tensors"):
-            _scan_pickle_stream(payload, result, where, max_pickles=1, report_malformed=False)
-        elif depth < MAX_NESTING:
-            _scan_bytes(payload, result, where, depth + 1, report_unknown=False)
+    with archive:
+        for member in members:
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            payload = handle.read()  # read into memory; nothing is written to disk
+            where = f"{label}:{member.name}"
+            if member.name in ("pickle", "sys_info"):
+                _scan_pickle_stream(payload, result, where)
+            elif member.name in ("storages", "tensors"):
+                _scan_pickle_stream(payload, result, where, max_pickles=1, report_malformed=False)
+            elif depth < MAX_NESTING:
+                _scan_bytes(payload, result, where, depth + 1, report_unknown=False)
 
 
 def _scan_7z(data, result: PickleScanResult, label: str, depth: int) -> None:
@@ -514,7 +515,8 @@ def _read_7z(archive) -> dict:
     import py7zr
 
     factory = py7zr.io.BytesIOFactory(limit=MAX_7Z_UNPACKED_BYTES)
-    archive.extractall(factory=factory)
+    # Extracts into in-memory buffers capped at MAX_7Z_UNPACKED_BYTES; nothing is written to disk.
+    archive.extractall(factory=factory)  # noqa: S202
     return {name: buffer.read() for name, buffer in factory.products.items()}
 
 

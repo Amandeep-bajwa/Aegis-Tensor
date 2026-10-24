@@ -3,19 +3,17 @@
 Unified CLI for static steganography detection and dynamic Trojan fuzzing in AI models.
 """
 
+import contextlib
 import sys
 
-# Ensure UTF-8 output encoding across all platforms (including Windows consoles)
+# Ensure UTF-8 output encoding across all platforms (including Windows consoles).
+# A stream that cannot be reconfigured keeps its encoding; output still works, with replacements.
 if hasattr(sys.stdout, "reconfigure"):
-    try:
+    with contextlib.suppress(Exception):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
 if hasattr(sys.stderr, "reconfigure"):
-    try:
+    with contextlib.suppress(Exception):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
 
 import json
 import zipfile
@@ -68,14 +66,12 @@ def _is_structural(result) -> bool:
 
 def get_risk_badge(level: str) -> str:
     """Return styled security risk badge for terminal display."""
-    normalized = str(level).upper()
-    if normalized == "CRITICAL":
-        return "[bold white on red] [!] CRITICAL MALWARE [/bold white on red]"
-    elif normalized == "SUSPICIOUS":
-        return "[bold black on yellow] [?] SUSPICIOUS ANOMALY [/bold black on yellow]"
-    elif normalized == "CLEAN":
-        return "[bold white on green] [OK] CLEAN [/bold white on green]"
-    return level
+    badges = {
+        "CRITICAL": "[bold white on red] [!] CRITICAL MALWARE [/bold white on red]",
+        "SUSPICIOUS": "[bold black on yellow] [?] SUSPICIOUS ANOMALY [/bold black on yellow]",
+        "CLEAN": "[bold white on green] [OK] CLEAN [/bold white on green]",
+    }
+    return badges.get(str(level).upper(), level)
 
 
 app = typer.Typer(
@@ -86,11 +82,11 @@ app = typer.Typer(
 console = Console()
 
 BANNER = r"""[bold cyan]
-    ___    ______ _____ _____ _____     _____ _____ _   _ _____ ___________ 
+    ___    ______ _____ _____ _____     _____ _____ _   _ _____ ___________
    / _ \  |  ____|  __ \_   _/ ____|   |_   _|  ___| \ | /  ___|  _  | ___ \
   / /_\ \ | |__  | |  \/ | || (___ ______| | | |__ |  \| \ `--.| | | | |_/ /
-  |  _  | |  __| | | __  | | \___ \______| | |  __|| . ` |`--. \ | | |    / 
-  | | | | | |____| |_\ \_| |_____) |     | | | |___| |\  /\__/ /\ \_/ / |\ \ 
+  |  _  | |  __| | | __  | | \___ \______| | |  __|| . ` |`--. \ | | |    /
+  | | | | | |____| |_\ \_| |_____) |     | | | |___| |\  /\__/ /\ \_/ / |\ \
   \_| |_/ |______|\____/_____|_____/     \_/ \____/\_| \_/\____/ \___/\_| \_|
 [/bold cyan]
 [dim]Adversarial Threat Scanner: Steganography & Sleeper Agent Trojan Detection[/dim]
@@ -108,12 +104,16 @@ def main(
 ):
     if version:
         console.print(f"[bold cyan]Aegis-Tensor[/bold cyan] version [green]{__version__}[/green]")
-        console.print(
-            f"Rust Core Engine (`aegis_core`): {'[bold green]Loaded[/bold green]' if CORE_AVAILABLE else '[bold yellow]Not compiled (run `maturin develop`)[/bold yellow]'}"
+        core = (
+            "[bold green]Loaded[/bold green]"
+            if CORE_AVAILABLE
+            else "[bold yellow]Not compiled (run `maturin develop`)[/bold yellow]"
         )
-        console.print(
-            f"PyTorch Dynamic Engine: {'[bold green]Available[/bold green]' if TORCH_AVAILABLE else '[bold yellow]Not installed[/bold yellow]'}"
+        torch_state = (
+            "[bold green]Available[/bold green]" if TORCH_AVAILABLE else "[bold yellow]Not installed[/bold yellow]"
         )
+        console.print(f"Rust Core Engine (`aegis_core`): {core}")
+        console.print(f"PyTorch Dynamic Engine: {torch_state}")
         raise typer.Exit()
 
     if ctx.invoked_subcommand is None:
@@ -219,7 +219,7 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         file_format = detect_file_format(path)
         special = sniff_format(path)
     except OSError as e:
-        raise ScanError(str(e))
+        raise ScanError(str(e)) from e
     if special:  # GGUF, Keras, HDF5 or ONNX: format-specific checks plus tensor statistics
         result = scan_model_format(path, special, thresholds)
         return {
@@ -234,7 +234,7 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         try:
             container = scan_pickle_file(path, keep_streams=keep_streams)
         except (OSError, zipfile.BadZipFile) as e:
-            raise ScanError(str(e))
+            raise ScanError(str(e)) from e
         return {
             "path": str(path),
             "format": container.format,
@@ -250,7 +250,7 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         )
         header = scan_safetensors_header(path)
     except Exception as e:  # malformed safetensors: core parse error, bad header JSON or encoding
-        raise ScanError(str(e))
+        raise ScanError(str(e)) from e
     return {
         "path": str(path),
         "format": "safetensors",
@@ -442,7 +442,8 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
             Panel(
                 f"{badge}\n\n"
                 "[bold green]No steganographic anomalies detected.[/bold green]\n"
-                "Entropy, sign/exponent lanes and low-order bit planes all conform to expected neural network profiles.\n"
+                "Entropy, sign/exponent lanes and low-order bit planes all conform to expected "
+                "neural network profiles.\n"
                 "[dim]Note: a clean result rules out the signals above, not every possible payload. "
                 "Low-order bits that look random cannot be checked statistically; `aegis disarm` removes them.[/dim]",
                 title="✅ Model Clean",
@@ -466,12 +467,14 @@ def scan_command(
     exponent_threshold: float = typer.Option(
         DEFAULT_THRESHOLDS["exponent"],
         "--exponent-threshold",
-        help="Sign/exponent byte-lane entropy (bits) above which float values count as overwritten. Clean weights measure about 2.7.",
+        help="Sign/exponent byte-lane entropy (bits) above which float values count as overwritten. "
+        "Clean weights measure about 2.7.",
     ),
     plane_floor: float = typer.Option(
         DEFAULT_THRESHOLDS["plane"],
         "--plane-floor",
-        help="Low mantissa bit-plane entropy (bits) below which the least significant bits count as structured. Clean weights measure about 8.",
+        help="Low mantissa bit-plane entropy (bits) below which the least significant bits count as structured. "
+        "Clean weights measure about 8.",
     ),
     benford_threshold: float | None = typer.Option(
         None,
@@ -531,7 +534,7 @@ def scan_command(
         engine_names = select(engines)
     except ValueError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(code=EXIT_ERROR)
+        raise typer.Exit(code=EXIT_ERROR) from None
 
     files, errored = [], False
     for index, path in enumerate(model_paths):
@@ -730,7 +733,7 @@ def fuzz_command(
                     border_style="red",
                 )
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
 
     # 5. Obtain the model without running code from the model file wherever possible.
     file_format = detect_file_format(model_path)
@@ -770,7 +773,7 @@ def fuzz_command(
                 return fuzz_call(on_step_progress)
             except Exception as e:
                 console.print(f"[bold red]Dynamic fuzzing failed during execution:[/bold red] {e}")
-                raise typer.Exit(code=1)
+                raise typer.Exit(code=1) from None
 
     if arch or hf_config:
         # Trusted architecture from the user; untrusted weights loaded as plain tensors.
@@ -796,11 +799,12 @@ def fuzz_command(
                     border_style="red",
                 )
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         if keys["missing"] or keys["unexpected"]:
             console.print(
                 f"[yellow]Warning:[/yellow] {len(keys['missing'])} missing and {len(keys['unexpected'])} unexpected "
-                "weight keys (tied weights are usually reported as missing). Use --strict-weights to require an exact match."
+                "weight keys (tied weights are usually reported as missing). "
+                "Use --strict-weights to require an exact match."
             )
         vocab = vocab_size
         if vocab is None and shape is None and config is not None:
@@ -837,7 +841,8 @@ def fuzz_command(
                 "[bold yellow]Safetensors weights need an architecture to run.[/bold yellow]\n\n"
                 "Pass the architecture the weights belong to; no code from the file is executed:\n"
                 f"  [bold green]aegis fuzz {model_path} --hf-config <repo-or-dir>[/bold green]\n"
-                f"  [bold green]aegis fuzz {model_path} --arch package.module:ClassName --input-shape 1,3,32,32[/bold green]\n\n"
+                f"  [bold green]aegis fuzz {model_path} --arch package.module:ClassName "
+                "--input-shape 1,3,32,32[/bold green]\n\n"
                 "To inspect the file statically instead, use:\n"
                 f"  [bold green]aegis scan {model_path}[/bold green]",
                 title="ℹ️ Architecture Required",
@@ -850,7 +855,8 @@ def fuzz_command(
             Panel(
                 f"[bold red]Not a model format `aegis fuzz` can load[/bold red] (detected: {file_format}).\n\n"
                 "Supported: .safetensors with --arch/--hf-config, PyTorch state dicts, and pickled "
-                f"modules with --trust-pickle. To inspect the file statically, run [bold green]aegis scan {model_path}[/bold green].",
+                "modules with --trust-pickle. To inspect the file statically, run "
+                f"[bold green]aegis scan {model_path}[/bold green].",
                 title="❌ Unsupported File",
                 border_style="red",
             )
@@ -882,10 +888,10 @@ def fuzz_command(
             console.print(
                 Panel(f"[bold red]Refusing to unpickle:[/bold red] {e}", title="❌ No Sandbox", border_style="red")
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         except SandboxError as e:
             console.print(f"[bold red]Sandboxed fuzzing failed:[/bold red] {e}")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
         console.print(
             "[dim]Sandbox: no network; on macOS also no writes outside a throwaway directory and no "
             "process spawning. A malicious file can still forge its own report: see docs/FUZZ_SAFETY.md.[/dim]"
@@ -966,12 +972,17 @@ def fuzz_command(
         badge = get_risk_badge("CRITICAL" if is_critical else "SUSPICIOUS")
         summary_text = (
             f"{badge}\n\n"
-            f"• [bold red]Threat Alert:[/bold red] Internal activations exhibited anomalous spikes under perturbation.\n"
-            f"• [bold]Peak Activation Layer:[/bold] [cyan]{overall_peak_layer or 'N/A'}[/cyan] ({max(highest_layer_activation, 0.0):.4f})\n"
-            f"• [bold]Baseline L_inf:[/bold] {report.baseline_l_inf:.4f}  ──▶  [bold]Peak Fuzzed L_inf:[/bold] {report.peak_fuzzed_l_inf:.4f}\n"
-            f"• [bold]Max Spike Multiplier:[/bold] [bold red]{report.spike_ratio:.2f}x[/bold red] (Threshold: {spike_threshold:.1f}x)\n"
-            f"• [bold]Flagged Layers ({len(report.suspicious_layers)}):[/bold] {', '.join(report.suspicious_layers) if report.suspicious_layers else 'None'}\n\n"
-            f"[dim yellow]Advisory: Disproportionate activation surges under random perturbations indicate dormant Sleeper Agent circuits.[/dim yellow]"
+            "• [bold red]Threat Alert:[/bold red] Internal activations exhibited anomalous spikes under perturbation.\n"
+            f"• [bold]Peak Activation Layer:[/bold] [cyan]{overall_peak_layer or 'N/A'}[/cyan] "
+            f"({max(highest_layer_activation, 0.0):.4f})\n"
+            f"• [bold]Baseline L_inf:[/bold] {report.baseline_l_inf:.4f}  ──▶  "
+            f"[bold]Peak Fuzzed L_inf:[/bold] {report.peak_fuzzed_l_inf:.4f}\n"
+            f"• [bold]Max Spike Multiplier:[/bold] [bold red]{report.spike_ratio:.2f}x[/bold red] "
+            f"(Threshold: {spike_threshold:.1f}x)\n"
+            f"• [bold]Flagged Layers ({len(report.suspicious_layers)}):[/bold] "
+            f"{', '.join(report.suspicious_layers) if report.suspicious_layers else 'None'}\n\n"
+            "[dim yellow]Advisory: Disproportionate activation surges under random perturbations indicate "
+            "dormant Sleeper Agent circuits.[/dim yellow]"
         )
         console.print(
             Panel(
@@ -984,9 +995,11 @@ def fuzz_command(
         badge = get_risk_badge("CLEAN")
         summary_text = (
             f"{badge}\n\n"
-            f"• [bold green]Model Integrity Verified:[/bold green] No activation spikes exceeded the {spike_threshold:.1f}x threshold.\n"
+            "• [bold green]Model Integrity Verified:[/bold green] "
+            f"No activation spikes exceeded the {spike_threshold:.1f}x threshold.\n"
             f"• [bold]Peak Monitored Layer:[/bold] [cyan]{overall_peak_layer or 'N/A'}[/cyan]\n"
-            f"• [bold]Baseline L_inf:[/bold] {report.baseline_l_inf:.4f}  ──▶  [bold]Peak Fuzzed L_inf:[/bold] {report.peak_fuzzed_l_inf:.4f}\n"
+            f"• [bold]Baseline L_inf:[/bold] {report.baseline_l_inf:.4f}  ──▶  "
+            f"[bold]Peak Fuzzed L_inf:[/bold] {report.peak_fuzzed_l_inf:.4f}\n"
             f"• [bold]Max Spike Multiplier:[/bold] [bold green]{report.spike_ratio:.2f}x[/bold green]\n"
             f"• [bold]Total Fuzzing Iterations:[/bold] {iterations}\n\n"
             f"[dim green]Advisory: Dynamic activations remain bounded within normal Gaussian envelopes.[/dim green]"
@@ -1066,7 +1079,8 @@ def disarm_command(
     allow_unsafe: bool = typer.Option(
         False,
         "--allow-unsafe",
-        help="Apply --low-bits above the per-dtype safe maximum. Widths that would reach the exponent are always refused.",
+        help="Apply --low-bits above the per-dtype safe maximum. "
+        "Widths that would reach the exponent are always refused.",
     ),
 ):
     """Round away low-order mantissa bits so hidden payloads are destroyed without detecting them.
@@ -1098,7 +1112,7 @@ def disarm_command(
             )
     except ValueError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     for warning in report.warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
@@ -1161,7 +1175,7 @@ def report_bundle_command(
         engine_names = select(engines)
     except ValueError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(code=EXIT_ERROR)
+        raise typer.Exit(code=EXIT_ERROR) from None
     thresholds = dict(DEFAULT_THRESHOLDS)
     outcomes = []
     for path in model_paths:
@@ -1169,7 +1183,7 @@ def report_bundle_command(
             outcomes.append(_scan_file(path, thresholds, engine_names))
         except ScanError as e:
             console.print(f"[bold red]Scan failed:[/bold red] {path}: {e}")
-            raise typer.Exit(code=EXIT_ERROR)
+            raise typer.Exit(code=EXIT_ERROR) from None
     output_dir = output_dir or default_bundle_dir(model_paths)
     if output_dir.exists():
         console.print(f"[bold red]Error:[/bold red] {output_dir} already exists; choose another --output-dir.")

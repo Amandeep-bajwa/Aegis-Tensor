@@ -74,7 +74,14 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+# Deliberate typography in terminal and Markdown output (info sign, multiplication sign, en dash).
+allowed-confusables = ["ℹ", "×", "–"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares CLI parameters as default values; these calls build immutable descriptors.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests assert by design.
-"tests/**" = ["S101"]
+# Tests assert by design (S101), and run the aegis CLI as a subprocess with fixed argument
+# lists built from tmp_path (S603).
+"tests/**" = ["S101", "S603"]

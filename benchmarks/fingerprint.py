@@ -40,7 +40,10 @@ def _normalise_python(text: str) -> str:
     offsets = [0]
     for line in lines:
         offsets.append(offsets[-1] + len(line))
-    position = lambda row_col: offsets[row_col[0] - 1] + row_col[1]
+
+    def position(row_col):
+        return offsets[row_col[0] - 1] + row_col[1]
+
     cuts, previous = [], tokenize.NEWLINE
     tokens = [t for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.type != tokenize.NL]
     for index, token in enumerate(tokens):

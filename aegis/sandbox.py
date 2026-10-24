@@ -50,12 +50,16 @@ def _macos_profile(workdir: str) -> str:
 
 def sandbox_prefix(workdir: str) -> list[str]:
     """Command prefix that isolates the child, or SandboxUnavailable."""
-    if sys.platform == "darwin" and shutil.which("sandbox-exec"):
-        return ["sandbox-exec", "-p", _macos_profile(workdir)]
-    if sys.platform.startswith("linux") and shutil.which("unshare"):
-        probe = subprocess.run(["unshare", "-rn", "true"], capture_output=True)
+    # Tools are called by the absolute path that was found, never re-resolved through PATH.
+    sandbox_exec = shutil.which("sandbox-exec") if sys.platform == "darwin" else None
+    if sandbox_exec:
+        return [sandbox_exec, "-p", _macos_profile(workdir)]
+    unshare = shutil.which("unshare") if sys.platform.startswith("linux") else None
+    if unshare:
+        # Fixed arguments; the probe only checks that unprivileged user namespaces work.
+        probe = subprocess.run([unshare, "-rn", "true"], capture_output=True)  # noqa: S603 - fixed argv, no shell
         if probe.returncode == 0:
-            return ["unshare", "-rn"]
+            return [unshare, "-rn"]
     raise SandboxUnavailable(
         "no sandbox available: need sandbox-exec (macOS) or unprivileged `unshare -rn` (Linux). "
         "Refusing to unpickle without network isolation."
@@ -83,7 +87,8 @@ def run_sandboxed(request: dict[str, Any], timeout: float = 1800.0) -> dict[str,
         request_path = Path(workdir) / "request.json"
         response_path = Path(workdir) / "response.json"
         request_path.write_text(json.dumps(request))
-        command = sandbox_prefix(workdir) + [
+        command = [
+            *sandbox_prefix(workdir),
             sys.executable,
             "-m",
             "aegis.sandbox_worker",
@@ -91,7 +96,9 @@ def run_sandboxed(request: dict[str, Any], timeout: float = 1800.0) -> dict[str,
             str(response_path),
         ]
         try:
-            proc = subprocess.run(
+            # argv list without a shell: the only untrusted input is the model path, passed inside
+            # request.json, and the child runs under the sandbox prefix above.
+            proc = subprocess.run(  # noqa: S603
                 command,
                 env=_child_env(workdir),
                 cwd=workdir,
@@ -100,7 +107,7 @@ def run_sandboxed(request: dict[str, Any], timeout: float = 1800.0) -> dict[str,
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
-            raise SandboxError(f"sandboxed process exceeded {timeout:.0f}s and was killed")
+            raise SandboxError(f"sandboxed process exceeded {timeout:.0f}s and was killed") from None
         if not response_path.exists():
             raise SandboxError(f"sandboxed process exited {proc.returncode} without a report: {proc.stderr[-1500:]}")
         return json.loads(response_path.read_text())

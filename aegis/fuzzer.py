@@ -655,7 +655,7 @@ class DynamicTrojanFuzzer:
     ) -> list[Any]:
         """Assemble the clean calibration set (always includes baseline_input)."""
         if calibration_inputs is not None:
-            return [baseline_input] + list(calibration_inputs)
+            return [baseline_input, *calibration_inputs]
 
         calibration = [baseline_input]
         if not torch.is_tensor(baseline_input) or num_calibration <= 0:

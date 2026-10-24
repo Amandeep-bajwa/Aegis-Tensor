@@ -80,14 +80,14 @@ class EngineResult:
 
 def available() -> dict[str, str | None]:
     """Installed engines and their versions."""
-    found = {}
+    from importlib.metadata import PackageNotFoundError, version
+
+    found: dict[str, str | None] = {}
     for name in ENGINES:
         try:
-            from importlib.metadata import version
-
             found[name] = version(name)
-        except Exception:
-            continue
+        except PackageNotFoundError:
+            continue  # not installed
     return found
 
 
@@ -123,7 +123,9 @@ def _console_script(name: str) -> list[str]:
 def _run(command: Sequence[str], stdin: bytes | None = None, capture: bool = False):
     with tempfile.TemporaryDirectory(prefix="aegis-engine-") as workdir:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "MODELSCAN"))}
-        completed = subprocess.run(
+        # argv list without a shell; the command is an engine executable resolved by _console_script,
+        # and the scanned file is passed as a path argument, never interpreted here.
+        completed = subprocess.run(  # noqa: S603
             list(command), input=stdin, capture_output=True, cwd=workdir, env=env, timeout=TIMEOUT_SECONDS
         )
     stderr = completed.stderr.decode("utf-8", "replace")[-400:]
@@ -192,7 +194,7 @@ def run_modelscan(path: Path, detected_format: str) -> EngineResult:
         os.symlink(Path(path).resolve(), link)
         out = Path(work) / "report.json"
         try:
-            code, stderr = _run(command + ["scan", "-p", str(link), "-r", "json", "-o", str(out)])
+            code, stderr = _run([*command, "scan", "-p", str(link), "-r", "json", "-o", str(out)])
         except subprocess.TimeoutExpired:
             result.error = "timed out"
             return result

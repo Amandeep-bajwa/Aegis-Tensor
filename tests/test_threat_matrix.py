@@ -168,7 +168,7 @@ def test_t07_oversized_tensor_name_is_flagged_for_quarantine(tmp_path):
 def test_t09_truncated_file_is_rejected_not_silently_scanned(tmp_path):
     path = _write(tmp_path / "m.safetensors", {"w": _weights(9)})
     path.write_bytes(path.read_bytes()[:-1000])
-    with pytest.raises(Exception):
+    with pytest.raises(OSError, match="incomplete metadata"):
         scan_safetensors(str(path))
 
 

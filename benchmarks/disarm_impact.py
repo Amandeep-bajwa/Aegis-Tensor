@@ -83,7 +83,10 @@ def sweep(model, dtype: torch.dtype, evaluate) -> list[dict]:
         k: (v.detach().to(dtype) if v.is_floating_point() else v.detach()).clone()
         for k, v in model.state_dict().items()
     }
-    upcast = lambda state: {k: v.to(compute[k]) for k, v in state.items()}
+
+    def upcast(state):
+        return {k: v.to(compute[k]) for k, v in state.items()}
+
     rows, baseline = [], None
     try:
         model.load_state_dict(upcast(original))

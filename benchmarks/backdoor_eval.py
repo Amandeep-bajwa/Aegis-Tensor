@@ -328,10 +328,15 @@ def detect_strip(model: nn.Module, x_clean_ref: np.ndarray, x_clean: np.ndarray,
     clf = PyTorchClassifier(
         probabilities, loss=nn.NLLLoss(), input_shape=(3, 32, 32), nb_classes=10, clip_values=(0, 1)
     )
-    as_float = lambda a: (a.astype(np.float32) / 255).transpose(0, 3, 1, 2)
+
+    def as_float(a):
+        return (a.astype(np.float32) / 255).transpose(0, 3, 1, 2)
+
+    def abstain(preds):  # STRIP abstains with all-zero output
+        return float(np.mean(np.all(preds == 0, axis=1)))
+
     defended = STRIP(clf)(num_samples=20, false_acceptance_rate=0.05)
     defended.mitigate(as_float(x_clean_ref))
-    abstain = lambda preds: float(np.mean(np.all(preds == 0, axis=1)))  # STRIP abstains with all-zero output
     return {
         "input_detection_rate": round(abstain(defended.predict(as_float(x_triggered))), 4),
         "input_false_positive_rate": round(abstain(defended.predict(as_float(x_clean))), 4),
@@ -380,11 +385,14 @@ def render(results: list[dict], meta: dict) -> str:
         "| attack | models | mean clean acc | mean ASR | Aegis flagged | NC flagged |",
         "|---|---|---|---|---|---|",
     ]
-    for attack in ("clean",) + ATTACKS:
+    for attack in ("clean", *ATTACKS):
         rows = [r for r in results if r["attack"] == attack and (attack == "clean" or r["asr"] >= meta["min_asr"])]
         if not rows:
             continue
-        mean = lambda key: sum(r[key] for r in rows) / len(rows)
+
+        def mean(key, rows=rows):
+            return sum(r[key] for r in rows) / len(rows)
+
         asr = "—" if attack == "clean" else f"{mean('asr'):.1%}"
         lines.append(
             f"| {attack} | {len(rows)} | {mean('clean_acc'):.1%} | {asr} | "

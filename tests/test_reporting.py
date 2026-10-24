@@ -157,9 +157,10 @@ def test_json_output_validates_against_schema(model_files):
 
 @needs_core
 def test_finding_ids_are_stable_across_runs(model_files):
-    ids = lambda: sorted(
-        f["id"] for e in json.loads(_invoke(*model_files, "-f", "json").stdout)["files"] for f in e["findings"]
-    )
+    def ids():
+        document = json.loads(_invoke(*model_files, "-f", "json").stdout)
+        return sorted(f["id"] for e in document["files"] for f in e["findings"])
+
     assert ids() == ids()
 
 

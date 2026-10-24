@@ -382,7 +382,7 @@ def _make(
     rule: str,
     message: str,
     location: dict[str, Any],
-    evidence: dict[str, Any] = None,
+    evidence: dict[str, Any] | None = None,
     command: str | None = None,
     severity: str | None = None,
 ) -> Finding:
@@ -414,7 +414,8 @@ def _disarm_command(path: str, strip: bool = False) -> str:
 def from_safetensors(path: str, tensor_results, header_result=None) -> list[Finding]:
     findings = []
     for result in tensor_results:
-        for rule_code, reason in zip(result.rules, result.anomaly_reasons):
+        # The Rust core appends a rule and its reason together, so the lists always pair up.
+        for rule_code, reason in zip(result.rules, result.anomaly_reasons, strict=True):
             rule = RULE_BY_CODE.get(rule_code, "AEGIS-T001")
             command = _disarm_command(path) if RULES[rule]["treatment"] == "disarm" else None
             findings.append(
@@ -514,7 +515,10 @@ def from_engines(path: str, results, aegis_findings: list[Finding]) -> list[Find
         if not result.ran:
             continue
         engine_worst = result.worst
-        rank = lambda level: -1 if level is None else SEVERITY_RANK[level]
+
+        def rank(level: str | None) -> int:
+            return -1 if level is None else SEVERITY_RANK[level]
+
         if rank(engine_worst) >= SEVERITY_RANK["high"] and rank(aegis_worst) < SEVERITY_RANK["high"]:
             findings.append(
                 _make(
@@ -546,10 +550,7 @@ def _split_location(location: str):
     if "@" in location:
         entry, _, tail = location.rpartition("@")
         offset = int(tail) if tail.isdigit() else None
-    if ":" in entry:
-        entry = entry.split(":", 1)[1]
-    else:
-        entry = None
+    entry = entry.split(":", 1)[1] if ":" in entry else None
     return entry, offset
 
 

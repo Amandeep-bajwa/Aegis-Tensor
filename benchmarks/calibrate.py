@@ -240,7 +240,6 @@ def scan_file(path: Path) -> dict:
     from aegis import scan_safetensors
     from aegis.formatscan import scan_safetensors_header
 
-    tensors = []
     t = DEFAULT_THRESHOLDS
     results = scan_safetensors(str(path), t["entropy"], t["benford"], t["exponent"], t["plane"])
     header = scan_safetensors_header(path)
@@ -302,7 +301,7 @@ def scan_gguf_header(repo: str, filename: str, sha: str) -> dict:
         data = handle.read(size)
         while True:
             try:
-                metadata, infos, end = parse_gguf_header(data)
+                metadata, _infos, end = parse_gguf_header(data)
                 break
             except ValueError as error:
                 if ("truncated" not in str(error) and "past the end" not in str(error)) or size >= 256 << 20:
@@ -475,7 +474,10 @@ def _quantiles(values: list[float]) -> str:
     if not values:
         return "—"
     values = sorted(values)
-    pick = lambda q: values[min(len(values) - 1, int(q * (len(values) - 1)))]
+
+    def pick(q):
+        return values[min(len(values) - 1, int(q * (len(values) - 1)))]
+
     return (
         f"min {values[0]:.3f} · p1 {pick(0.01):.3f} · p50 {pick(0.5):.3f} · p99 {pick(0.99):.3f} · max {values[-1]:.3f}"
     )

@@ -168,7 +168,7 @@ def parse_gguf_header(data) -> tuple[dict[str, Any], list[tuple[str, list[int], 
     reader = _Reader(data)
     if reader.take("<I") != struct.unpack("<I", GGUF_MAGIC)[0]:
         raise ValueError("not a GGUF file")
-    version, n_tensors, n_kv = reader.take("<I"), reader.take("<Q"), reader.take("<Q")
+    _version, n_tensors, n_kv = reader.take("<I"), reader.take("<Q"), reader.take("<Q")
     metadata = {}
     for _ in range(n_kv):
         key = reader.string()

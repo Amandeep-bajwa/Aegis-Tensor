@@ -97,7 +97,7 @@ def disarm_values() -> tuple[dict, list[str]]:
 
     results = {r["task"]: r for r in json.loads(impact.RESULTS_PATH.read_text())}
     current = fingerprint.disarm_fingerprint()
-    keys = dict(zip(["vit", "bert", "gpt2", "gpt2_f16", "qwen"], impact.TASK_LABELS))
+    keys = dict(zip(["vit", "bert", "gpt2", "gpt2_f16", "qwen"], impact.TASK_LABELS, strict=True))
     values, problems = {}, []
     for key, label in keys.items():
         task = results.get(label)
@@ -143,7 +143,7 @@ def render_section(claims: list[dict], markers: dict) -> str:
             evidence = []
             if claim.get("benchmark"):
                 evidence.append(f"[{Path(claim['benchmark']).name}]({claim['benchmark']})")
-            for file, name, line in markers.get(claim["id"], []):
+            for file, name, _line in markers.get(claim["id"], []):
                 evidence.append(f"[`{name}`]({file})")
             prefix = "**Known limit:** " if kind_label == "limit" else ""
             lines.append(f"| {claim['id']} | {prefix}{text} | {'<br>'.join(evidence)} |")

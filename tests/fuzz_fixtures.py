@@ -45,5 +45,5 @@ class SystemCallOnLoad(nn.Module):
 
 
 def _rebuild_with_side_effect(marker: str):
-    os.system(f"touch {marker}")
+    os.system(f"touch {marker}")  # noqa: S605 - the benign payload: it only creates a marker file in tmp_path
     return SystemCallOnLoad(marker)
