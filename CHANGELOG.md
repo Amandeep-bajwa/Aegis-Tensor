@@ -10,6 +10,9 @@ backfilled (issue A3).
 ## [Unreleased]
 
 ### Added
+- docs/KNOWN_BYPASSES.md: every known bypass and limit, with its evidence and where a fix is tracked.
+- Tests of the disarm guarantee at the default width for float32, float16 and bfloat16, in
+  safetensors and GGUF files: the rounded-away bits hold nothing afterwards.
 - Quality gates in CI: ruff, mypy, cargo fmt and clippy, a coverage floor, diff coverage on PRs,
   a wheel smoke test, a no-PyTorch test job, Conventional Commit PR titles and a check that code
   changes come with test changes.

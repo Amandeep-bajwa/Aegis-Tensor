@@ -252,3 +252,64 @@ def test_disarm_runs_without_torch(tmp_path):
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
     assert result.returncode == 0, result.stderr
+
+
+# --- The disarm guarantee at the default width -----------------------------------------
+# Whatever is stored in the bits disarm rounds away is gone afterwards: those bits are zero, and
+# the payload can move the kept value by at most one unit in the last kept place (the rounding
+# carry). This holds for every supported float dtype, without PyTorch.
+
+_BITS = {"float32": (np.uint32, 32), "float16": (np.uint16, 16), "bfloat16": (np.uint16, 16)}
+
+
+def _weight_bits(dtype_name: str, n: int, seed: int) -> np.ndarray:
+    values = np.random.default_rng(seed).normal(0, 0.02, n).astype(np.float32)
+    if dtype_name == "float32":
+        return values.view(np.uint32)
+    if dtype_name == "float16":
+        return values.astype(np.float16).view(np.uint16)
+    return (values.view(np.uint32) >> 16).astype(np.uint16)  # bfloat16: the top half of float32
+
+
+@pytest.mark.claim("C09")
+@pytest.mark.parametrize("dtype_name", ["float32", "float16", "bfloat16"])
+def test_default_width_leaves_nothing_of_a_low_bit_payload(dtype_name):
+    from aegis.disarm import default_width, round_bits
+
+    uint, _ = _BITS[dtype_name]
+    width = default_width(dtype_name)
+    low = uint((1 << width) - 1)
+    clean = _weight_bits(dtype_name, 20_000, 0)
+    payload = np.random.default_rng(1).integers(0, 1 << width, clean.size, dtype=np.uint64).astype(uint)
+    stuffed = (clean & ~low) | payload
+
+    disarmed = round_bits(stuffed, dtype_name, width)
+    assert not np.any(disarmed & low), "payload bits survived"
+    baseline = round_bits(clean & ~low, dtype_name, width)
+    carry = np.abs(disarmed.astype(np.int64) - baseline.astype(np.int64))
+    assert carry.max() <= 1 << width, "the payload moved a kept value by more than one rounding step"
+
+
+@pytest.mark.claim("C09")
+def test_files_disarmed_at_the_default_width_keep_no_low_bit_payload(tmp_path):
+    from safetensors.numpy import save_file as save_numpy
+
+    from aegis.disarm import default_width
+    from tests.test_model_formats import gguf_bytes
+
+    rng = np.random.default_rng(2)
+    f32 = _weight_bits("float32", 4096, 3) | rng.integers(0, 1 << 16, 4096, dtype=np.uint32)
+    f16 = _weight_bits("float16", 4096, 4) | rng.integers(0, 1 << 4, 4096, dtype=np.uint16)
+    save_numpy({"a": f32.view(np.float32), "b": f16.view(np.float16)}, str(tmp_path / "m.safetensors"))
+    (tmp_path / "m.gguf").write_bytes(
+        gguf_bytes([("general.alignment", 32)], [("a", [4096], 0, f32.tobytes()), ("b", [4096], 1, f16.tobytes())])
+    )
+    for name in ("m.safetensors", "m.gguf"):
+        out = tmp_path / f"out-{name}"
+        disarm_file(tmp_path / name, out)
+        # Both formats store "a" then "b" contiguously at the end of the file (16384 is aligned).
+        tail = out.read_bytes()[-(4096 * 4 + 4096 * 2) :]
+        a = np.frombuffer(tail[: 4096 * 4], dtype=np.uint32)
+        b = np.frombuffer(tail[4096 * 4 :], dtype=np.uint16)
+        assert not np.any(a & np.uint32((1 << default_width("float32")) - 1)), name
+        assert not np.any(b & np.uint16((1 << default_width("float16")) - 1)), name
