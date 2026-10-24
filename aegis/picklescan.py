@@ -72,10 +72,94 @@ DANGEROUS_BUILTINS = frozenset(
         "input",
     }
 )
-# Modules that legitimate tensor checkpoints reference. Older pickle protocols
-# name the builtins module `__builtin__`, so both spellings are treated alike.
+# Older pickle protocols name the builtins module `__builtin__`, so both spellings are treated alike.
 BUILTIN_MODULES = frozenset({"builtins", "__builtin__"})
-SAFE_MODULE_PREFIXES = ("torch", "collections", "numpy", "_codecs", "copyreg")
+# Parts of torch and numpy that run code, load native code or code from elsewhere, or load another
+# pickle without restriction. Checkpoints never import them (tests/test_pickle_allowlist.py).
+DANGEROUS_MODULE_PREFIXES = (
+    "torch.hub",
+    "torch.utils.cpp_extension",
+    "torch.jit",
+    "torch._C",
+    "torch.ops",
+    "torch._ops",
+    "torch.package",
+    "torch.distributed",
+    "torch.multiprocessing",
+    "torch._dynamo",
+    "torch._inductor",
+    "torch.compiler",
+    "numpy.testing",
+    "numpy.f2py",
+    "numpy.distutils",
+    "numpy.ctypeslib",
+)
+DANGEROUS_GLOBALS = frozenset({"torch.load", "torch.serialization.load", "numpy.load", "numpy.lib.npyio.load"})
+# Modules allowed whole: they hold containers and codecs only.
+SAFE_MODULE_PREFIXES = ("collections", "_codecs", "copyreg")
+# Under torch and numpy only the globals that torch.save and numpy files use are allowed; any
+# other name is reported as unrecognised. (Allowing all of torch let torch.hub.load through.)
+_TORCH_DTYPE = re.compile(
+    r"^(b?float|u?int|complex|qu?int|bits)\d\w*$|^(float|double|half|short|int|long|bool|cfloat|cdouble|chalf)$"
+)
+_TORCH_NAMES = frozenset(
+    {
+        "Size",
+        "device",
+        "strided",
+        "sparse_coo",
+        "sparse_csr",
+        "sparse_csc",
+        "sparse_bsr",
+        "sparse_bsc",
+        "_mkldnn",
+        "jagged",
+        "per_tensor_affine",
+        "per_channel_affine",
+        "per_tensor_symmetric",
+        "per_channel_symmetric",
+        "per_channel_affine_float_qparams",
+        "contiguous_format",
+        "channels_last",
+        "channels_last_3d",
+        "preserve_format",
+    }
+)
+_CHECKPOINT_GLOBALS = frozenset(
+    {
+        "torch.serialization._get_layout",
+        "torch.storage.UntypedStorage",
+        "torch.storage.TypedStorage",
+        "torch.storage._load_from_bytes",
+        "torch.nn.parameter.Parameter",
+        "torch.nn.parameter.Buffer",
+        "torch.nn.parameter.UninitializedParameter",
+        "numpy.ndarray",
+        "numpy.dtype",
+        "numpy.core.multiarray._reconstruct",
+        "numpy.core.multiarray.scalar",
+        "numpy._core.multiarray._reconstruct",
+        "numpy._core.multiarray.scalar",
+    }
+)
+
+
+def _checkpoint_global(module: str, name: str) -> bool:
+    """True for the torch and numpy globals that legitimate checkpoints import."""
+    if f"{module}.{name}" in _CHECKPOINT_GLOBALS:
+        return True
+    if module == "torch._utils":
+        return name.startswith("_rebuild_")  # tensor, parameter, sparse, quantized, nested ... rebuilders
+    if module in ("torch", "torch.cuda") and name.endswith("Storage") and name[:1].isupper():
+        return True  # legacy typed storages: torch.FloatStorage, torch.cuda.HalfStorage, ...
+    if module == "torch":
+        return name in _TORCH_NAMES or bool(_TORCH_DTYPE.match(name))
+    if module.startswith("torch.nn.modules.") or module == "torch.nn.functional":
+        return not name.startswith("_")  # full-module pickles: layer classes and activation functions
+    if module == "numpy.dtypes":
+        return name.endswith("DType")
+    return module == "numpy.random._pickle" and name.endswith("_ctor")
+
 
 MAX_KEPT_STREAMS = 64
 MAX_KEPT_STREAM_BYTES = 64 << 20
@@ -192,9 +276,14 @@ def _classify(module: str, name: str) -> tuple[str, str]:
         return "CRITICAL", f"imports {module}.{name} (code execution or system access)"
     if module in BUILTIN_MODULES and name in DANGEROUS_BUILTINS:
         return "CRITICAL", f"calls builtins.{name} (runs code)"
-    if module in BUILTIN_MODULES or module.startswith(SAFE_MODULE_PREFIXES):
+    dotted = f"{module}.{name}"
+    if dotted in DANGEROUS_GLOBALS or any(
+        dotted == prefix or dotted.startswith(prefix + ".") for prefix in DANGEROUS_MODULE_PREFIXES
+    ):
+        return "CRITICAL", f"imports {dotted} (runs or loads code, or loads an unrestricted pickle)"
+    if module in BUILTIN_MODULES or module.startswith(SAFE_MODULE_PREFIXES) or _checkpoint_global(module, name):
         return "", ""
-    return "SUSPICIOUS", f"imports unrecognised global {module}.{name}"
+    return "SUSPICIOUS", f"imports unrecognised global {dotted}"
 
 
 def _record(module: str, name: str, result: PickleScanResult, location: str) -> None:

@@ -67,6 +67,7 @@ probed and confirmed.
 |---|---|---|---|---|---|---|
 | T10 | Code execution via imported `os`/`posix` callable | Pickle RCE; nullifAI (Hugging Face, Feb 2025) | Opcode scan against allowlist | Global name | `refuse` | tested |
 | T11 | `builtins.eval` / `exec` / `__import__` | Pickle RCE | Opcode scan | Global name | `refuse` | tested |
+| T34 | A torch or numpy function that runs code: `torch.hub.load`, `torch.utils.cpp_extension.load_inline`, `torch.jit`, `torch.ops.load_library`, nested `torch.load`, `numpy.testing` helpers that exec | Allowlist bypass: scanners that trust every `torch.*` or `numpy.*` global | Exact allowlist of the globals checkpoints use; these entry points are critical, any other `torch`/`numpy` global is unrecognised | Global name | `refuse` | tested |
 | T12 | Malformed pickle, payload before or after the broken region | nullifAI broken-pickle evasion | Scan resyncs past malformed bytes and reports every global | Entry and byte offset | `refuse` | tested |
 | T13 | Loading an unsafe pickle through `aegis fuzz` | Loader-side RCE | `weights_only=True` by default; payload never runs | — | `refuse` | tested |
 | T20 | Callable assembled from memoized strings (MEMOIZE/PUT then GET then STACK_GLOBAL) | Scanner evasion | Static stack and memo simulation | Byte offset | `refuse` | tested |

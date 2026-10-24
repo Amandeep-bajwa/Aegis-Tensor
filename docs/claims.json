@@ -7,7 +7,7 @@
     },
     {
       "id": "C02",
-      "text": "Detects pickle imports of code-execution primitives (for example `os.system`, `builtins.eval`) in raw pickles, PyTorch zip and legacy tar checkpoints, numpy object arrays and 7z archives, whatever the file extension."
+      "text": "Detects pickle imports of code-execution primitives (for example `os.system`, `builtins.eval`, `torch.hub.load`, `torch.utils.cpp_extension.load_inline`) in raw pickles, PyTorch zip and legacy tar checkpoints, numpy object arrays and 7z archives, whatever the file extension."
     },
     {
       "id": "C03",
