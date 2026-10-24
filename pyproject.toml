@@ -40,6 +40,10 @@ fuzzer = [
 ]
 dev = [
     "pytest>=7.0.0",
+    "pytest-cov>=6.0",           # coverage gate in CI
+    "diff-cover>=9.0",           # new code on a PR must be at least 90% covered
+    "ruff==0.16.9",              # pinned: the lint job and local runs must agree
+    "mypy==2.4.0",               # pinned for the same reason
     "maturin>=1.5.0",
     "py7zr>=1.0",  # lets tests (and users) inspect 7z-wrapped checkpoints
     "jsonschema[format]>=4.18",  # validates JSON and SARIF output in tests
@@ -67,6 +71,9 @@ aegis = "aegis.cli:app"
 module-name = "aegis.aegis_core"
 features = ["pyo3/extension-module"]
 python-source = "."
+
+[tool.coverage.run]
+source = ["aegis"]
 
 [tool.ruff]
 line-length = 120
