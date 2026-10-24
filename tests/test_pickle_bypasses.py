@@ -307,3 +307,41 @@ def test_real_torch_checkpoint_is_clean(tmp_path):
     result = scan_pickle_file(path)
     assert result.format == "zip"
     assert not result.is_suspicious, result.findings
+
+
+# --- (e) less common routes ------------------------------------------------------
+
+
+def test_ext_opcode_is_reported(tmp_path):
+    """EXT1 fetches a callable from copyreg's extension registry, so its name never appears."""
+    path = _write(tmp_path / "ext.pkl", b"\x80\x02\x82\x01)R.")
+    result = scan_pickle_file(path)
+    assert any(f.code == "extension_registry" for f in result.findings), result.findings
+
+
+def _legacy_tar(path, members):
+    import tarfile
+
+    with tarfile.open(path, "w") as archive:
+        for name, data in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return path
+
+
+def test_payload_in_legacy_tar_storages_member_is_found(tmp_path, marker):
+    """The `storages` member starts with a pickle (then raw bytes); that pickle is scanned."""
+    payload = memo_assembled_system(marker) + b"\x00" * 64
+    path = _legacy_tar(
+        tmp_path / "legacy_tar.pt",
+        [("sys_info", pickle.dumps({})), ("pickle", pickle.dumps({"w": 1})), ("storages", payload)],
+    )
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "storages" in f.location for f in result.findings), result.findings
+
+
+def test_unexpected_member_in_legacy_tar_is_scanned(tmp_path):
+    path = _legacy_tar(tmp_path / "legacy_tar.pt", [("sys_info", pickle.dumps({})), ("extra.pkl", eval_global())])
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "extra.pkl" in f.location for f in result.findings), result.findings

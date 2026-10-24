@@ -101,3 +101,26 @@ def test_unparseable_gguf_template_is_a_medium_finding(tmp_path):
     path.write_bytes(gguf_bytes([("tokenizer.chat_template", "{% for %}")], []))
     code, entry = _scan_json(path)
     assert code == 1 and entry["findings"][0]["rule"] == "AEGIS-G003"
+
+
+def test_names_bound_by_with_blocks_are_traced():
+    computed = "{% with a = '__cla' ~ 'ss__' %}{{ ''|attr(a) }}{% endwith %}"
+    plain = "{% with a = 'role' %}{{ messages[0]|attr(a) }}{% endwith %}"
+    assert [kind for kind, _ in check_template(computed)] == ["injection"]
+    assert check_template(plain) == []
+
+
+def test_names_bound_by_call_block_defaults_are_traced():
+    macro = "{% macro m(n) %}{{ caller() }}{% endmacro %}"
+    computed = macro + "{% call(a='__cla' ~ 'ss__') m(1) %}{{ ''|attr(a) }}{% endcall %}"
+    plain = macro + "{% call(a='role') m(1) %}{{ messages[0]|attr(a) }}{% endcall %}"
+    assert [kind for kind, _ in check_template(computed)] == ["injection"]
+    assert check_template(plain) == []
+
+
+def test_without_jinja2_a_text_match_is_used_and_marked_unverifiable(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jinja2", None)
+    issues = check_template("{{ ''.__class__.__mro__[1].__subclasses__() }}")
+    assert ("unverifiable", "jinja2 is not installed, so only a text match was possible") in issues

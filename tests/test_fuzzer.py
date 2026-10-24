@@ -322,3 +322,15 @@ def test_fuzz_model_without_input_shape_or_vocab_size_is_refused():
 
     with pytest.raises(ValueError, match=r"input_shape .* or vocab_size"):
         fuzz_model(SimpleLinearModel(), spike_threshold=3.0, iterations=1, seed=0)
+
+
+@needs_torch
+def test_hook_manager_finds_tensors_inside_dataclass_outputs():
+    @dataclass
+    class Output:
+        label: str
+        logits: "torch.Tensor"
+
+    tensor = torch.ones(2)
+    assert ActivationHookManager._find_tensor(Output("x", tensor)) is tensor
+    assert ActivationHookManager._find_tensor(Output("x", None)) is None

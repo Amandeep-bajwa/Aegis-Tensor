@@ -196,3 +196,43 @@ def test_report_bundle_packages_hashes_source_and_findings_without_the_model(tmp
     assert "Do not contact the uploader" in report and "Nothing has been sent" in report
     assert sorted(p.name for p in out.iterdir()) == ["REPORT.md", "findings.json", "manifest.json"]
     assert evil.read_bytes() not in b"".join(p.read_bytes() for p in out.iterdir())
+
+
+def test_available_lists_only_installed_engines(monkeypatch):
+    from aegis import engines
+
+    monkeypatch.setattr(engines, "ENGINES", ("aegis-no-such-engine",))
+    assert engines.available() == {}
+
+
+def test_engine_failure_is_a_finding_and_is_shown(capsys):
+    from aegis.cli import _render_engines
+    from aegis.engines import EngineIssue, EngineResult
+    from aegis.findings import from_engines
+
+    failed = EngineResult("modelscan", "0.8", ran=True, error="timed out")
+    flagged = EngineResult("fickling", "0.1", ran=True, issues=[EngineIssue("high", "suspicious call")])
+    findings = from_engines("m.pt", [failed], [])
+    assert [f.rule for f in findings] == ["AEGIS-E003"]
+    assert "modelscan: timed out" in findings[0].message
+
+    _render_engines({"engines": [failed, flagged]})
+    shown = capsys.readouterr().out
+    assert "timed out" in shown
+    assert "high" in shown and "1 issue(s)" in shown
+
+
+def test_package_imports_without_the_compiled_core(tmp_path):
+    """Without aegis_core, the package still imports and says the core is not built."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = (
+        "import sys; sys.modules['aegis.aegis_core'] = None\n"
+        "import aegis\n"
+        "assert not aegis.CORE_AVAILABLE and aegis.scan_safetensors is None\n"
+    )
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
+    assert result.returncode == 0, result.stderr

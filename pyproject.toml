@@ -74,6 +74,9 @@ python-source = "."
 
 [tool.coverage.run]
 source = ["aegis"]
+# tests/test_cli.py runs the CLI as a subprocess; measure it there too. The sandboxed child
+# gets a minimal environment (aegis/sandbox.py, _child_env), so it is not measured.
+patch = ["subprocess"]
 
 [tool.ruff]
 line-length = 120

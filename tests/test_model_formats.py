@@ -249,3 +249,22 @@ def test_onnx_external_paths_custom_ops_and_tensor_rules(tmp_path):
     assert ("AEGIS-T002", "bad") in found
     severities = {f["rule"]: f["severity"] for f in entry["findings"]}
     assert severities["AEGIS-X001"] == "high" and severities["AEGIS-X002"] == "low"
+
+
+def test_gguf_tensor_pointing_past_the_end_is_flagged(tmp_path):
+    full = gguf_bytes([("general.alignment", 32)], [("blk.0.attn_q.weight", [1 << 16], 0, _weights().tobytes())])
+    path = tmp_path / "truncated.gguf"
+    path.write_bytes(full[:-4096])
+    code, entry = _scan_json(path)
+    assert code == 1
+    assert any("points past the end of the file" in f["message"] for f in entry["findings"]), entry["findings"]
+
+
+def test_gguf_text_report_lists_findings(tmp_path):
+    path = tmp_path / "evil.gguf"
+    template = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
+    path.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", template)], []))
+    result = runner.invoke(app, ["scan", str(path)])
+    assert result.exit_code == 1
+    assert "format: gguf" in result.output
+    assert "tokenizer.chat_template" in result.output

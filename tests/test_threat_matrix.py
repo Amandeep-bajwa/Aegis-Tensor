@@ -131,6 +131,15 @@ def test_t08_clean_model_has_no_findings_in_any_channel(tmp_path):
 # --- Container and header channels --------------------------------------------
 
 
+def test_t05_payload_split_across_small_metadata_values_is_flagged(tmp_path):
+    """No single value is over the per-value limit, but together they are over the total limit."""
+    path = _write(tmp_path / "m.safetensors", {"w": _weights(5)}, metadata={f"k{i}": "A" * 1000 for i in range(5)})
+    header = scan_safetensors_header(path)
+    assert [f.channel for f in header.findings] == ["metadata"]
+    assert header.findings[0].where == "__metadata__"
+    assert "totals 5000 bytes" in header.findings[0].message
+
+
 @pytest.mark.claim("C07")
 def test_t05_payload_in_metadata_is_flagged_and_stripped(tmp_path):
     path = _write(tmp_path / "m.safetensors", {"w": _weights(5)}, metadata={"note": "A" * 200_000})
