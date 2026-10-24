@@ -235,8 +235,8 @@ def _walk_layers(node: Any) -> Iterator[dict[str, Any]]:
 def _check_keras_config(config: Any, result: ModelFormatResult, where: str) -> None:
     for layer in _walk_layers(config):
         cls = layer.get("class_name")
-        config = layer.get("config")
-        layer_cfg = config if isinstance(config, dict) else {}
+        layer_config = layer.get("config")
+        layer_cfg = layer_config if isinstance(layer_config, dict) else {}
         name = layer_cfg.get("name", cls)
         if cls == "Lambda":
             result.add(

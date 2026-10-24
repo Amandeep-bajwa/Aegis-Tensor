@@ -673,10 +673,11 @@ def fuzz_command(
     print_banner()
 
     # 1. Validate model file existence
-    if not model_path.exists():
+    if not model_path.is_file():
+        problem = "is a directory, not a file" if model_path.is_dir() else "not found"
         console.print(
             Panel(
-                f"[bold red]Model file not found:[/bold red] {model_path.resolve()}",
+                f"[bold red]Model file {problem}:[/bold red] {model_path.resolve()}",
                 title="❌ File Not Found",
                 border_style="red",
             )

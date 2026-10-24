@@ -196,3 +196,11 @@ def test_cli_fuzz_mocked_execution(tmp_path):
         assert "iteration_reports" in data
         assert data["iteration_reports"][0]["highest_layer"] == "transformer.layer.2"
         assert data["iteration_reports"][0]["layer_stats"]["transformer.layer.2"]["l_inf_norm"] == 9.0
+
+
+def test_cli_fuzz_directory_is_refused_without_a_traceback(tmp_path):
+    """A directory is not a model file: a clear error, with or without PyTorch installed."""
+    result = run_cli("fuzz", str(tmp_path))
+    assert result.returncode == 1
+    assert "not a file" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
