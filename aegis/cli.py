@@ -683,7 +683,24 @@ def fuzz_command(
         )
         raise typer.Exit(code=1)
 
-    # 2. Check PyTorch availability
+    # 2. Refuse files fuzzing cannot load. Detection reads bytes only, so this needs no PyTorch.
+    from aegis.picklescan import detect_file_format
+
+    file_format = detect_file_format(model_path)
+    if file_format not in ("safetensors", "pickle", "zip", "tar"):
+        console.print(
+            Panel(
+                f"[bold red]Not a model format `aegis fuzz` can load[/bold red] (detected: {file_format}).\n\n"
+                "Supported: .safetensors with --arch/--hf-config, PyTorch state dicts, and pickled "
+                "modules with --trust-pickle. To inspect the file statically, run "
+                f"[bold green]aegis scan {model_path}[/bold green].",
+                title="❌ Unsupported File",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    # Check PyTorch availability
     if not TORCH_AVAILABLE:
         console.print(
             Panel(
@@ -706,7 +723,6 @@ def fuzz_command(
         load_safetensors_weights,
         parse_kwargs,
     )
-    from aegis.picklescan import detect_file_format
 
     # 3. Validate threshold and iterations
     if spike_threshold <= 0:
@@ -738,7 +754,6 @@ def fuzz_command(
             raise typer.Exit(code=1) from None
 
     # 5. Obtain the model without running code from the model file wherever possible.
-    file_format = detect_file_format(model_path)
     if file_format == "zip" and _is_torchscript_archive(model_path):
         console.print(
             Panel(
@@ -849,18 +864,6 @@ def fuzz_command(
                 f"  [bold green]aegis scan {model_path}[/bold green]",
                 title="ℹ️ Architecture Required",
                 border_style="yellow",
-            )
-        )
-        raise typer.Exit(code=1)
-    elif file_format not in ("pickle", "zip", "tar"):
-        console.print(
-            Panel(
-                f"[bold red]Not a model format `aegis fuzz` can load[/bold red] (detected: {file_format}).\n\n"
-                "Supported: .safetensors with --arch/--hf-config, PyTorch state dicts, and pickled "
-                "modules with --trust-pickle. To inspect the file statically, run "
-                f"[bold green]aegis scan {model_path}[/bold green].",
-                title="❌ Unsupported File",
-                border_style="red",
             )
         )
         raise typer.Exit(code=1)
