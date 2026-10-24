@@ -2,9 +2,8 @@
 
 import numpy as np
 import pytest
-import torch
-from safetensors.torch import load_file, save_file
 
+from aegis import TORCH_AVAILABLE
 from aegis.disarm import (
     MANTISSA_BITS,
     SAFE_MAX_LOW_BITS,
@@ -13,7 +12,14 @@ from aegis.disarm import (
     effective_low_bits,
 )
 
+if TORCH_AVAILABLE:
+    import torch
+    from safetensors.torch import load_file, save_file
 
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
+
+
+@needs_torch
 def test_float32_low_bits_are_cleared():
     values = torch.tensor([1.0000001, 3.1415927, -0.02, 123.456], dtype=torch.float32)
     out = disarm_tensor(values, low_bits=8)
@@ -21,6 +27,7 @@ def test_float32_low_bits_are_cleared():
     assert torch.all((out.view(torch.int32) & low_mask) == 0)
 
 
+@needs_torch
 def test_disarm_changes_values_by_at_most_half_ulp_of_kept_bits():
     rng = np.random.default_rng(0)
     values = torch.from_numpy(rng.normal(0, 0.02, 10_000).astype(np.float32))
@@ -30,6 +37,7 @@ def test_disarm_changes_values_by_at_most_half_ulp_of_kept_bits():
     assert rel <= 2 ** (8 - 23)
 
 
+@needs_torch
 def test_inf_and_nan_are_preserved():
     values = torch.tensor([float("inf"), float("-inf"), float("nan")], dtype=torch.float32)
     out = disarm_tensor(values, low_bits=4)
@@ -38,24 +46,30 @@ def test_inf_and_nan_are_preserved():
     assert torch.isnan(out[2])
 
 
-@pytest.mark.parametrize("dtype,bits", [(torch.float16, 9), (torch.bfloat16, 6)])
-def test_half_precision_dtypes(dtype, bits):
+@needs_torch
+@pytest.mark.parametrize("dtype_name,bits", [("float16", 9), ("bfloat16", 6)])
+def test_half_precision_dtypes(dtype_name, bits):
+    dtype = getattr(torch, dtype_name)
     values = torch.linspace(-2, 2, 257).to(dtype)
     out = disarm_tensor(values, low_bits=bits)
     assert out.dtype == dtype
     assert out.shape == values.shape
 
 
+@needs_torch
 @pytest.mark.claim("C09")
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-def test_rounding_every_mantissa_bit_is_refused(dtype):
+@pytest.mark.parametrize("dtype_name", ["float32", "float16", "bfloat16"])
+def test_rounding_every_mantissa_bit_is_refused(dtype_name):
+    dtype = getattr(torch, dtype_name)
     values = torch.linspace(-2, 2, 33).to(dtype)
     with pytest.raises(ValueError, match="exponent"):
         disarm_tensor(values, low_bits=MANTISSA_BITS[dtype])
 
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-def test_effective_low_bits_clamps_to_safe_maximum(dtype):
+@needs_torch
+@pytest.mark.parametrize("dtype_name", ["float32", "float16", "bfloat16"])
+def test_effective_low_bits_clamps_to_safe_maximum(dtype_name):
+    dtype = getattr(torch, dtype_name)
     assert effective_low_bits(dtype, 100) == SAFE_MAX_LOW_BITS[dtype]
     assert effective_low_bits(dtype, 1) == 1
     assert effective_low_bits(dtype, SAFE_MAX_LOW_BITS[dtype] + 1, allow_unsafe=True) == SAFE_MAX_LOW_BITS[dtype] + 1
@@ -63,6 +77,7 @@ def test_effective_low_bits_clamps_to_safe_maximum(dtype):
         effective_low_bits(dtype, MANTISSA_BITS[dtype], allow_unsafe=True)
 
 
+@needs_torch
 def test_bfloat16_file_with_default_width_is_clamped_not_rejected(tmp_path):
     src, dst = tmp_path / "bf16.safetensors", tmp_path / "out.safetensors"
     save_file({"w": torch.randn(1024).to(torch.bfloat16)}, str(src))
@@ -74,17 +89,22 @@ def test_bfloat16_file_with_default_width_is_clamped_not_rejected(tmp_path):
     assert report.max_relative_change <= 2.0 ** (SAFE_MAX_LOW_BITS[torch.bfloat16] - 7 - 1)
 
 
+@needs_torch
 def test_mixed_dtype_file_gets_per_dtype_widths(tmp_path):
     src, dst = tmp_path / "mixed.safetensors", tmp_path / "out.safetensors"
-    save_file({
-        "a": torch.randn(256),
-        "b": torch.randn(256).to(torch.float16),
-        "c": torch.randn(256).to(torch.bfloat16),
-    }, str(src))
+    save_file(
+        {
+            "a": torch.randn(256),
+            "b": torch.randn(256).to(torch.float16),
+            "c": torch.randn(256).to(torch.bfloat16),
+        },
+        str(src),
+    )
     report = disarm_file(src, dst, low_bits=8)
     assert report.effective_low_bits == {"float32": 8, "float16": 4, "bfloat16": 2}
 
 
+@needs_torch
 def test_float32_default_width_needs_no_warning(tmp_path):
     src, dst = tmp_path / "f32.safetensors", tmp_path / "out.safetensors"
     save_file({"w": torch.randn(256)}, str(src))
@@ -92,6 +112,7 @@ def test_float32_default_width_needs_no_warning(tmp_path):
     assert report.warnings == []
 
 
+@needs_torch
 def test_allow_unsafe_goes_past_safe_maximum_with_a_warning(tmp_path):
     src, dst = tmp_path / "bf16.safetensors", tmp_path / "out.safetensors"
     save_file({"w": torch.randn(256).to(torch.bfloat16)}, str(src))
@@ -102,6 +123,7 @@ def test_allow_unsafe_goes_past_safe_maximum_with_a_warning(tmp_path):
         disarm_file(src, dst, low_bits=7, allow_unsafe=True)
 
 
+@needs_torch
 def test_rejects_invalid_low_bits():
     with pytest.raises(ValueError):
         disarm_tensor(torch.zeros(4, dtype=torch.float32), low_bits=0)
@@ -111,6 +133,7 @@ def test_rejects_invalid_low_bits():
         disarm_tensor(torch.zeros(4, dtype=torch.int64), low_bits=2)
 
 
+@needs_torch
 @pytest.mark.claim("C09")
 def test_disarm_file_destroys_lsb_payload_and_keeps_metadata(tmp_path):
     rng = np.random.default_rng(1)
@@ -137,6 +160,7 @@ def test_disarm_file_destroys_lsb_payload_and_keeps_metadata(tmp_path):
         assert handle.metadata() == {"generator": "test"}
 
 
+@needs_torch
 def test_disarm_file_skips_integer_tensors(tmp_path):
     src = tmp_path / "mixed.safetensors"
     dst = tmp_path / "out.safetensors"
@@ -152,6 +176,7 @@ def test_disarm_file_skips_integer_tensors(tmp_path):
 
 # --- Format coverage and edge cases (numpy core, no torch needed) -------------------
 
+
 def test_largest_finite_values_do_not_round_up_to_infinity():
     from aegis.disarm import round_bits
 
@@ -161,6 +186,7 @@ def test_largest_finite_values_do_not_round_up_to_infinity():
     assert np.all((out.view(np.uint32) & 0xFFFF) == 0)
 
 
+@needs_torch
 def test_disarm_rewrites_a_whitespace_padded_header_compactly(tmp_path):
     import json
     import struct
@@ -169,11 +195,11 @@ def test_disarm_rewrites_a_whitespace_padded_header_compactly(tmp_path):
     save_file({"w": torch.randn(256)}, str(src))
     raw = src.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    padded = raw[8:8 + n].rstrip() + b" " * 4096  # a 4 KiB whitespace channel
-    src.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    padded = raw[8 : 8 + n].rstrip() + b" " * 4096  # a 4 KiB whitespace channel
+    src.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     disarm_file(src, dst)
     (m,) = struct.unpack("<Q", dst.read_bytes()[:8])
-    assert m < 200 and json.loads(dst.read_bytes()[8:8 + m])["w"]["dtype"] == "F32"
+    assert m < 200 and json.loads(dst.read_bytes()[8 : 8 + m])["w"]["dtype"] == "F32"
 
 
 @pytest.mark.claim("C09")
@@ -187,9 +213,12 @@ def test_gguf_float_tensors_are_disarmed_and_everything_else_is_kept(tmp_path):
     f16 = rng.normal(0, 0.02, 4096).astype(np.float16)
     q4 = rng.integers(0, 256, 2304, dtype=np.uint8).tobytes()  # Q4_0 blocks
     src, dst = tmp_path / "m.gguf", tmp_path / "m.disarmed.gguf"
-    src.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
-                               [("norm", [4096], 0, f32.tobytes()), ("emb", [4096], 1, f16.tobytes()),
-                                ("blk.0.ffn", [4096], 2, q4)]))
+    src.write_bytes(
+        gguf_bytes(
+            [("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
+            [("norm", [4096], 0, f32.tobytes()), ("emb", [4096], 1, f16.tobytes()), ("blk.0.ffn", [4096], 2, q4)],
+        )
+    )
     report = disarm_file(src, dst)
     assert report.format == "gguf" and report.tensors_disarmed == 2
     assert report.effective_low_bits == {"float32": 8, "float16": 4}
@@ -202,7 +231,7 @@ def test_gguf_float_tensors_are_disarmed_and_everything_else_is_kept(tmp_path):
     norm = np.frombuffer(out, np.uint32, 4096, start + infos[0][3])
     emb = np.frombuffer(out, np.uint16, 4096, start + infos[1][3])
     assert np.all(norm & 0xFF == 0) and np.all(emb & 0xF == 0)
-    assert out[start + infos[2][3]:start + infos[2][3] + len(q4)] == q4
+    assert out[start + infos[2][3] : start + infos[2][3] + len(q4)] == q4
 
 
 def test_disarm_runs_without_torch(tmp_path):
@@ -210,12 +239,16 @@ def test_disarm_runs_without_torch(tmp_path):
     import sys
     from pathlib import Path
 
+    from safetensors.numpy import save_file as save_numpy
+
     src = tmp_path / "m.safetensors"
-    save_file({"w": torch.randn(256)}, str(src))
-    code = ("import sys; sys.modules['torch'] = None\n"
-            "from aegis.disarm import disarm_file\n"
-            f"r = disarm_file({str(src)!r}, {str(tmp_path / 'o.safetensors')!r})\n"
-            "assert r.tensors_disarmed == 1\n")
+    save_numpy({"w": np.random.default_rng(0).standard_normal(256).astype(np.float32)}, str(src))
+    code = (
+        "import sys; sys.modules['torch'] = None\n"
+        "from aegis.disarm import disarm_file\n"
+        f"r = disarm_file({str(src)!r}, {str(tmp_path / 'o.safetensors')!r})\n"
+        "assert r.tensors_disarmed == 1\n"
+    )
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
     assert result.returncode == 0, result.stderr

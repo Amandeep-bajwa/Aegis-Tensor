@@ -1,13 +1,14 @@
 """Tests for Shannon Entropy and Benford's Law in aegis_core."""
 
-import pytest
 import numpy as np
+import pytest
+
 from aegis import (
     CORE_AVAILABLE,
+    benford_law_mad,
     mantissa_bit_plane_entropy,
     shannon_entropy_bytes,
     shannon_entropy_chunked,
-    benford_law_mad,
 )
 
 
@@ -52,7 +53,7 @@ def test_benford_law_ideal_vs_anomalous():
     total = 5000
     for d in range(1, 10):
         p_d = np.log10(1 + 1 / d)
-        count = int(round(p_d * total))
+        count = round(p_d * total)
         samples.extend([float(d) + 0.1 * i for i in range(count)])
 
     benford_mad = benford_law_mad(samples)

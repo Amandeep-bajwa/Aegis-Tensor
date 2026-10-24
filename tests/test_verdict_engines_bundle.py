@@ -10,12 +10,16 @@ import pickle
 
 import numpy as np
 import pytest
-import torch
 from safetensors.numpy import save_file
 from typer.testing import CliRunner
 
+from aegis import TORCH_AVAILABLE
 from aegis.cli import app
 
+if TORCH_AVAILABLE:
+    import torch
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 runner = CliRunner()
 
 
@@ -45,6 +49,7 @@ def _scan(*args, engines="none"):
 
 # --- Verdicts -------------------------------------------------------------------------
 
+
 @pytest.mark.claim("C17")
 def test_verdict_levels_and_next_steps(tmp_path, marker):
     clean, tampered, evil = tmp_path / "clean.safetensors", tmp_path / "t.safetensors", tmp_path / "evil.pkl"
@@ -68,6 +73,7 @@ def test_verdict_levels_and_next_steps(tmp_path, marker):
     assert document["verdict"]["level"] == "critical"
 
 
+@needs_torch
 def test_clean_pickle_suggests_a_safer_format_to_the_owner(tmp_path):
     path = tmp_path / "ok.pt"
     torch.save({"w": torch.randn(8)}, path)
@@ -107,9 +113,11 @@ def test_leaked_key_in_gguf_metadata_is_reported(tmp_path):
 
 needs_engines = pytest.mark.skipif(
     not all(__import__("importlib").util.find_spec(n) for n in ("fickling", "modelscan")),
-    reason="install the engines extra: pip install -e .[engines]")
+    reason="install the engines extra: pip install -e .[engines]",
+)
 
 
+@needs_torch
 @needs_engines
 @pytest.mark.claim("C19")
 def test_engines_fold_into_one_verdict(tmp_path, marker):
@@ -131,8 +139,13 @@ def test_renamed_file_is_still_given_to_modelscan(tmp_path, marker):
     path = tmp_path / "weights.dat"
     path.write_bytes(pickle.dumps(_Touch(marker)))
     _, document = _scan(path, engines="modelscan")
-    assert document["files"][0]["engines"][0] == {"name": "modelscan", "version": document["files"][0]["engines"][0]["version"],
-                                                  "ran": True, "error": None, "worst": "critical"}
+    assert document["files"][0]["engines"][0] == {
+        "name": "modelscan",
+        "version": document["files"][0]["engines"][0]["version"],
+        "ran": True,
+        "error": None,
+        "worst": "critical",
+    }
 
 
 @pytest.mark.claim("C19")
@@ -157,6 +170,7 @@ def test_unknown_or_missing_engine_is_an_error(tmp_path):
 
 # --- Report bundle ------------------------------------------------------------------------
 
+
 @pytest.mark.claim("C20")
 def test_report_bundle_packages_hashes_source_and_findings_without_the_model(tmp_path, marker):
     import hashlib
@@ -173,9 +187,52 @@ def test_report_bundle_packages_hashes_source_and_findings_without_the_model(tmp
     entry = manifest["files"][0]
     assert manifest["sent"] is False and manifest["disclosure_route"] == "platform"
     assert entry["sha256"] == hashlib.sha256(evil.read_bytes()).hexdigest()
-    assert entry["source"] == {"repo_url": "https://huggingface.co/acme/chat", "revision": "ab" * 20,
-                               "path_in_repo": "model.pkl"}
+    assert entry["source"] == {
+        "repo_url": "https://huggingface.co/acme/chat",
+        "revision": "ab" * 20,
+        "path_in_repo": "model.pkl",
+    }
     report = (out / "REPORT.md").read_text()
     assert "Do not contact the uploader" in report and "Nothing has been sent" in report
     assert sorted(p.name for p in out.iterdir()) == ["REPORT.md", "findings.json", "manifest.json"]
     assert evil.read_bytes() not in b"".join(p.read_bytes() for p in out.iterdir())
+
+
+def test_available_lists_only_installed_engines(monkeypatch):
+    from aegis import engines
+
+    monkeypatch.setattr(engines, "ENGINES", ("aegis-no-such-engine",))
+    assert engines.available() == {}
+
+
+def test_engine_failure_is_a_finding_and_is_shown(capsys):
+    from aegis.cli import _render_engines
+    from aegis.engines import EngineIssue, EngineResult
+    from aegis.findings import from_engines
+
+    failed = EngineResult("modelscan", "0.8", ran=True, error="timed out")
+    flagged = EngineResult("fickling", "0.1", ran=True, issues=[EngineIssue("high", "suspicious call")])
+    findings = from_engines("m.pt", [failed], [])
+    assert [f.rule for f in findings] == ["AEGIS-E003"]
+    assert "modelscan: timed out" in findings[0].message
+
+    _render_engines({"engines": [failed, flagged]})
+    shown = capsys.readouterr().out
+    assert "timed out" in shown
+    assert "high" in shown and "1 issue(s)" in shown
+
+
+def test_package_imports_without_the_compiled_core(tmp_path):
+    """Without aegis_core, the package still imports and says the core is not built."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = (
+        "import sys; sys.modules['aegis.aegis_core'] = None\n"
+        "import aegis\n"
+        "assert not aegis.CORE_AVAILABLE and aegis.scan_safetensors is None\n"
+    )
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)
+    assert result.returncode == 0, result.stderr

@@ -2,16 +2,22 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
-import torch
-from safetensors.torch import save_file
 from typer.testing import CliRunner
 
+from aegis import TORCH_AVAILABLE
 from aegis.cli import app
-from tests.fuzz_fixtures import CleanMLP, SystemCallOnLoad, ThresholdBackdoor
 
+if TORCH_AVAILABLE:
+    import torch
+    from safetensors.torch import save_file
+
+    from tests.fuzz_fixtures import CleanMLP, SystemCallOnLoad, ThresholdBackdoor
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 runner = CliRunner()
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -20,7 +26,7 @@ def _sandbox_available() -> bool:
     from aegis.sandbox import SandboxUnavailable, sandbox_prefix
 
     try:
-        sandbox_prefix("/tmp")
+        sandbox_prefix(tempfile.gettempdir())
         return True
     except SandboxUnavailable:
         return False
@@ -36,20 +42,24 @@ def _fuzz(*args):
 
 # --- Safetensors into a trusted architecture -----------------------------------
 
+
+@needs_torch
 @pytest.mark.claim("C12")
 def test_backdoor_in_safetensors_is_found_without_pickle(tmp_path):
     torch.manual_seed(0)
     path = tmp_path / "backdoor.safetensors"
     save_file(ThresholdBackdoor().state_dict(), str(path))
     out = tmp_path / "report.json"
-    result = _fuzz(path, "--arch", "tests.fuzz_fixtures:ThresholdBackdoor", "--input-shape", "2,10",
-                   "-n", "12", "-o", out)
+    result = _fuzz(
+        path, "--arch", "tests.fuzz_fixtures:ThresholdBackdoor", "--input-shape", "2,10", "-n", "12", "-o", out
+    )
     assert result.exit_code == 0, result.output
     report = json.loads(out.read_text())
     assert report["suspected_trojan"]
     assert "fc2" in report["suspicious_layers"]
 
 
+@needs_torch
 def test_clean_safetensors_model_is_nominal(tmp_path):
     torch.manual_seed(0)
     path = tmp_path / "clean.safetensors"
@@ -60,6 +70,7 @@ def test_clean_safetensors_model_is_nominal(tmp_path):
     assert not json.loads(out.read_text())["suspected_trojan"]
 
 
+@needs_torch
 def test_state_dict_pt_loads_weights_only_into_arch(tmp_path):
     torch.manual_seed(0)
     path = tmp_path / "backdoor.pt"
@@ -69,6 +80,7 @@ def test_state_dict_pt_loads_weights_only_into_arch(tmp_path):
     assert "fc2" in result.output
 
 
+@needs_torch
 def test_wrong_architecture_is_rejected(tmp_path):
     path = tmp_path / "m.safetensors"
     save_file({"unrelated.weight": torch.zeros(3, 3)}, str(path))
@@ -77,6 +89,7 @@ def test_wrong_architecture_is_rejected(tmp_path):
     assert "match the architecture" in result.output
 
 
+@needs_torch
 def test_strict_weights_rejects_partial_match(tmp_path):
     path = tmp_path / "m.safetensors"
     state = CleanMLP().state_dict()
@@ -87,6 +100,7 @@ def test_strict_weights_rejects_partial_match(tmp_path):
     assert strict.exit_code == 1
 
 
+@needs_torch
 def test_arch_without_input_shape_or_vocab_is_an_error(tmp_path):
     path = tmp_path / "m.safetensors"
     save_file(CleanMLP().state_dict(), str(path))
@@ -95,6 +109,7 @@ def test_arch_without_input_shape_or_vocab_is_an_error(tmp_path):
     assert "--input-shape" in result.output
 
 
+@needs_torch
 @pytest.mark.claim("C01", "C12")
 def test_full_module_pickle_is_refused_without_trust(tmp_path):
     marker = tmp_path / "MARKER"
@@ -108,6 +123,8 @@ def test_full_module_pickle_is_refused_without_trust(tmp_path):
 
 # --- Sandboxed --trust-pickle ----------------------------------------------------
 
+
+@needs_torch
 @pytest.mark.claim("C13")
 @needs_sandbox
 def test_trusted_pickle_is_fuzzed_in_the_sandbox(tmp_path):
@@ -143,6 +160,7 @@ def test_sandbox_confines_writes_and_blocks_shell(tmp_path):
     assert not outside.exists()
 
 
+@needs_torch
 @pytest.mark.claim("C14")
 @needs_sandbox
 @macos_only

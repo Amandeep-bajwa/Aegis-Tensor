@@ -22,32 +22,110 @@ string operation over template literals, or that comes from a model-supplied var
 from __future__ import annotations
 
 import re
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from collections.abc import Iterator
 
 # Filters that build or transform strings: a lookup key produced by one is computed.
 _STRING_FILTERS = {
-    "format", "join", "replace", "reverse", "string", "lower", "upper", "capitalize", "title", "trim",
-    "center", "indent", "wordwrap", "truncate", "urlencode", "first", "last", "list", "safe", "e",
-    "escape", "forceescape", "striptags", "batch", "slice", "sort", "unique", "map", "select", "reject",
+    "format",
+    "join",
+    "replace",
+    "reverse",
+    "string",
+    "lower",
+    "upper",
+    "capitalize",
+    "title",
+    "trim",
+    "center",
+    "indent",
+    "wordwrap",
+    "truncate",
+    "urlencode",
+    "first",
+    "last",
+    "list",
+    "safe",
+    "e",
+    "escape",
+    "forceescape",
+    "striptags",
+    "batch",
+    "slice",
+    "sort",
+    "unique",
+    "map",
+    "select",
+    "reject",
 }
 # str methods that build strings.
 _STRING_METHODS = {
-    "join", "format", "format_map", "replace", "strip", "lstrip", "rstrip", "upper", "lower", "center",
-    "ljust", "rjust", "zfill", "swapcase", "translate", "encode", "decode", "removeprefix", "removesuffix",
-    "title", "capitalize", "casefold", "expandtabs", "partition", "rpartition", "split", "rsplit",
+    "join",
+    "format",
+    "format_map",
+    "replace",
+    "strip",
+    "lstrip",
+    "rstrip",
+    "upper",
+    "lower",
+    "center",
+    "ljust",
+    "rjust",
+    "zfill",
+    "swapcase",
+    "translate",
+    "encode",
+    "decode",
+    "removeprefix",
+    "removesuffix",
+    "title",
+    "capitalize",
+    "casefold",
+    "expandtabs",
+    "partition",
+    "rpartition",
+    "split",
+    "rsplit",
 }
 # Filters whose arguments name attributes or other filters.
-_ATTRIBUTE_FILTERS = {"attr", "map", "select", "reject", "selectattr", "rejectattr", "sort", "groupby",
-                      "sum", "unique", "min", "max", "dictsort"}
+_ATTRIBUTE_FILTERS = {
+    "attr",
+    "map",
+    "select",
+    "reject",
+    "selectattr",
+    "rejectattr",
+    "sort",
+    "groupby",
+    "sum",
+    "unique",
+    "min",
+    "max",
+    "dictsort",
+}
 # Attributes that expose interpreter internals without a leading underscore.
-_INTERNAL_ATTRIBUTES = {"mro", "func_globals", "func_code", "f_globals", "f_locals", "f_builtins", "gi_frame",
-                        "gi_code", "cr_frame", "cr_code", "ag_frame", "ag_code", "tb_frame", "tb_next"}
+_INTERNAL_ATTRIBUTES = {
+    "mro",
+    "func_globals",
+    "func_code",
+    "f_globals",
+    "f_locals",
+    "f_builtins",
+    "gi_frame",
+    "gi_code",
+    "cr_frame",
+    "cr_code",
+    "ag_frame",
+    "ag_code",
+    "tb_frame",
+    "tb_next",
+}
 _FORMAT_FIELD_ACCESS = re.compile(r"\{[^{}]*[.\[][^{}]*\}")
 
-Issue = Tuple[str, str]  # (code, message): code "injection" or "unverifiable"
+Issue = tuple[str, str]  # (code, message): code "injection" or "unverifiable"
 
 
-def check_template(text: str) -> List[Issue]:
+def check_template(text: str) -> list[Issue]:
     """Issues found in ``text``. An empty list means no escape route was found."""
     try:
         from jinja2 import Environment, nodes
@@ -55,7 +133,8 @@ def check_template(text: str) -> List[Issue]:
     except ImportError:  # pragma: no cover - jinja2 is a dependency; kept for minimal installs
         return _regex_fallback(text)
     try:
-        tree = Environment(extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"]).parse(text)
+        # Parse only: the template is never compiled or rendered, so autoescaping does not apply.
+        tree = Environment(extensions=["jinja2.ext.loopcontrols", "jinja2.ext.do"]).parse(text)  # noqa: S701
     except TemplateSyntaxError as error:
         return [("unverifiable", f"chat template does not parse as Jinja ({error.message}, line {error.lineno})")]
     return _Analyzer(nodes, tree).run()
@@ -64,8 +143,8 @@ def check_template(text: str) -> List[Issue]:
 class _Analyzer:
     def __init__(self, nodes, tree):
         self.nodes, self.tree = nodes, tree
-        self.issues: List[Issue] = []
-        self.assignments: Dict[str, List] = {}  # variable or "ns.attr" -> expressions assigned to it
+        self.issues: list[Issue] = []
+        self.assignments: dict[str, list] = {}  # variable or "ns.attr" -> expressions assigned to it
         self._collect_assignments()
 
     # --- Bindings -------------------------------------------------------------------
@@ -94,7 +173,7 @@ class _Analyzer:
             elif isinstance(node, n.For):
                 self._bind(node.target, node.iter)
             elif isinstance(node, n.With):
-                for target, value in zip(node.targets, node.values):
+                for target, value in zip(node.targets, node.values, strict=False):
                     self._bind(target, value)
             elif isinstance(node, n.Macro):
                 macros[node.name] = node
@@ -102,12 +181,13 @@ class _Analyzer:
                 for index, default in enumerate(node.defaults):
                     self._bind(node.args[offset + index], default)
             elif isinstance(node, n.CallBlock):
-                for arg, default in zip(reversed(node.args), reversed(node.defaults)):
+                # Only trailing parameters have defaults, so the lengths differ by design.
+                for arg, default in zip(reversed(node.args), reversed(node.defaults), strict=False):
                     self._bind(arg, default)
         for call in self.tree.find_all(n.Call):  # macro arguments are bound at each call site
             if isinstance(call.node, n.Name) and call.node.name in macros:
                 params = macros[call.node.name].args
-                for param, value in zip(params, call.args):
+                for param, value in zip(params, call.args, strict=False):  # a call may pass fewer arguments
                     self._bind(param, value)
                 for keyword in call.kwargs:
                     for param in params:
@@ -116,7 +196,7 @@ class _Analyzer:
 
     # --- Taint ----------------------------------------------------------------------
 
-    def _resolve(self, node, seen: Set[str]) -> Iterator:
+    def _resolve(self, node, seen: set[str]) -> Iterator:
         """Expressions assigned to the variable (or namespace attribute) ``node`` reads."""
         n = self.nodes
         key = None
@@ -129,7 +209,7 @@ class _Analyzer:
             for value in self.assignments[key]:
                 yield key, value
 
-    def _walk_resolved(self, expr, seen: Set[str]) -> Iterator:
+    def _walk_resolved(self, expr, seen: set[str]) -> Iterator:
         for node in _walk(self.nodes, expr):
             yield node
             for _, value in self._resolve(node, seen):
@@ -137,11 +217,12 @@ class _Analyzer:
 
     def _has_literal(self, expr) -> bool:
         n = self.nodes
-        return any((isinstance(node, n.Const) and isinstance(node.value, str))
-                   or _model_supplied(n, node, self.assignments)
-                   for node in self._walk_resolved(expr, set()))
+        return any(
+            (isinstance(node, n.Const) and isinstance(node.value, str)) or _model_supplied(n, node, self.assignments)
+            for node in self._walk_resolved(expr, set())
+        )
 
-    def _taint(self, expr) -> Optional[str]:
+    def _taint(self, expr) -> str | None:
         """Why ``expr`` is not a visibly harmless name, or None if it is.
 
         A name is harmful if it traces back to an underscore literal, or if it is built by a
@@ -183,7 +264,7 @@ class _Analyzer:
         if reason:
             self._report("injection", f"{where} is computed at render time from {reason}", node)
 
-    def run(self) -> List[Issue]:
+    def run(self) -> list[Issue]:
         n = self.nodes
         for node in self.tree.find_all((n.Import, n.FromImport, n.Include, n.Extends)):
             self._report("unverifiable", f"template loads another template (`{type(node).__name__.lower()}`)", node)
@@ -205,7 +286,9 @@ class _Analyzer:
                 if not isinstance(fmt, n.Const):
                     self._report("injection", "`str.format` is called on a computed format string", node)
                 elif isinstance(fmt.value, str) and _FORMAT_FIELD_ACCESS.search(fmt.value):
-                    self._report("injection", f"`str.format` field {fmt.value!r} reads attributes of its arguments", node)
+                    self._report(
+                        "injection", f"`str.format` field {fmt.value!r} reads attributes of its arguments", node
+                    )
         seen, unique = set(), []
         for issue in self.issues:
             if issue not in seen:
@@ -223,8 +306,12 @@ def _walk(nodes, expr) -> Iterator:
 def _model_supplied(nodes, node, assignments) -> bool:
     """Render variables such as ``bos_token`` and ``eos_token`` are read from the model's own
     vocabulary, so the file's author chooses their text."""
-    return (isinstance(node, nodes.Name) and node.ctx == "load" and node.name.endswith("_token")
-            and node.name not in assignments)
+    return (
+        isinstance(node, nodes.Name)
+        and node.ctx == "load"
+        and node.name.endswith("_token")
+        and node.name not in assignments
+    )
 
 
 def _underscore(name: str) -> bool:
@@ -245,7 +332,7 @@ _REGEX_FALLBACK = [
 ]
 
 
-def _regex_fallback(text: str) -> List[Issue]:
+def _regex_fallback(text: str) -> list[Issue]:
     hits = [label for pattern, label in _REGEX_FALLBACK if pattern.search(text)]
     issues = [("injection", "chat template uses " + ", ".join(hits))] if hits else []
-    return issues + [("unverifiable", "jinja2 is not installed, so only a text match was possible")]
+    return [*issues, ("unverifiable", "jinja2 is not installed, so only a text match was possible")]

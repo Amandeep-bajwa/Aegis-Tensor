@@ -18,8 +18,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # What decides findings on safetensors and GGUF files: tensor rules (Rust), header rules,
 # the GGUF parser, template analysis and the default thresholds.
-SCAN_SOURCES = ["src/lib.rs", "aegis/formatscan.py", "aegis/modelformats.py",
-                "aegis/templatescan.py", "aegis/thresholds.py"]
+SCAN_SOURCES = [
+    "src/lib.rs",
+    "aegis/formatscan.py",
+    "aegis/modelformats.py",
+    "aegis/templatescan.py",
+    "aegis/thresholds.py",
+]
 DISARM_SOURCES = ["aegis/disarm.py"]
 
 
@@ -35,7 +40,10 @@ def _normalise_python(text: str) -> str:
     offsets = [0]
     for line in lines:
         offsets.append(offsets[-1] + len(line))
-    position = lambda row_col: offsets[row_col[0] - 1] + row_col[1]
+
+    def position(row_col):
+        return offsets[row_col[0] - 1] + row_col[1]
+
     cuts, previous = [], tokenize.NEWLINE
     tokens = [t for t in tokenize.generate_tokens(io.StringIO(text).readline) if t.type != tokenize.NL]
     for index, token in enumerate(tokens):
@@ -43,8 +51,11 @@ def _normalise_python(text: str) -> str:
         if token.type == tokenize.COMMENT:
             cuts.append((position(token.start), position(token.end)))
             continue
-        if (token.type == tokenize.STRING and previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
-                and following in (tokenize.NEWLINE, tokenize.COMMENT, tokenize.ENDMARKER)):
+        if (
+            token.type == tokenize.STRING
+            and previous in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)
+            and following in (tokenize.NEWLINE, tokenize.COMMENT, tokenize.ENDMARKER)
+        ):
             cuts.append((position(token.start), position(token.end)))
         previous = token.type
     kept, cursor = [], 0

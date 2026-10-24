@@ -108,8 +108,8 @@ fn mantissa_bit_plane_entropy_for(data: &[u8], bit: u32) -> f64 {
     }
 
     let mut packed_bits = vec![0u8; float_count.div_ceil(8)];
-    for (index, chunk) in data.chunks_exact(4).enumerate() {
-        let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (index, chunk) in data.as_chunks::<4>().0.iter().enumerate() {
+        let word = u32::from_le_bytes(*chunk);
         let mantissa_bit = ((word & 0x007F_FFFF) >> bit) & 1;
         packed_bits[index / 8] |= (mantissa_bit as u8) << (index % 8);
     }
@@ -187,14 +187,14 @@ fn calculate_benford_stats(floats: &[f32]) -> BenfordStats {
     let mut sum_absolute_deviations = 0.0;
     let mut chi_square = 0.0;
 
-    for d in 1..=9 {
+    for (d, &count) in digit_counts.iter().enumerate().skip(1) {
         let expected_p = (1.0 + 1.0 / (d as f64)).log10();
-        let observed_p = digit_counts[d] as f64 / valid_count as f64;
+        let observed_p = count as f64 / valid_count as f64;
         let expected_count = expected_p * valid_count as f64;
 
         sum_absolute_deviations += (observed_p - expected_p).abs();
         if expected_count > 0.0 {
-            chi_square += ((digit_counts[d] as f64 - expected_count).powi(2)) / expected_count;
+            chi_square += ((count as f64 - expected_count).powi(2)) / expected_count;
         }
     }
 
@@ -206,20 +206,26 @@ fn calculate_benford_stats(floats: &[f32]) -> BenfordStats {
 }
 
 fn decode_f32_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect()
 }
 
 fn decode_f16_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(2)
-        .map(|chunk| f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+    data.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| f16::from_bits(u16::from_le_bytes(*chunk)).to_f32())
         .collect()
 }
 
 fn decode_bf16_bytes(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(2)
-        .map(|chunk| bf16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32())
+    data.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| bf16::from_bits(u16::from_le_bytes(*chunk)).to_f32())
         .collect()
 }
 
@@ -326,7 +332,11 @@ fn plane_one_fraction(data: &[u8], width: usize, plane: u32) -> f64 {
         ones += ((word >> plane) & 1) as usize;
         count += 1;
     }
-    if count == 0 { 0.0 } else { ones as f64 / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        ones as f64 / count as f64
+    }
 }
 
 /// True when most sampled elements hold distinct values. Constant or heavily
@@ -359,7 +369,13 @@ struct Thresholds {
 
 /// Apply every tensor rule to one tensor's raw little-endian bytes. Used for safetensors
 /// files and, through `scan_tensor_bytes`, for tensors read from other formats.
-fn analyze_tensor(name: &str, dtype: Dtype, shape: Vec<usize>, data_bytes: &[u8], t: Thresholds) -> TensorScanResult {
+fn analyze_tensor(
+    name: &str,
+    dtype: Dtype,
+    shape: Vec<usize>,
+    data_bytes: &[u8],
+    t: Thresholds,
+) -> TensorScanResult {
     let num_elements: usize = shape.iter().product();
 
     let entropy = shannon_entropy_bytes(data_bytes);
@@ -387,7 +403,9 @@ fn analyze_tensor(name: &str, dtype: Dtype, shape: Vec<usize>, data_bytes: &[u8]
                 .count();
             bad as f64 / values.len() as f64
         });
-    let benford_stats = float_values.as_ref().map(|values| calculate_benford_stats(values));
+    let benford_stats = float_values
+        .as_ref()
+        .map(|values| calculate_benford_stats(values));
     let benford_mad = benford_stats.map(|s| s.mad).unwrap_or(0.0);
 
     let lane_entropies: Vec<f64> = if is_float {
@@ -528,9 +546,9 @@ pub fn scan_safetensors(
         .map_err(|e| PyIOError::new_err(format!("Failed to open model file '{}': {}", path, e)))?;
 
     let mmap = unsafe {
-        MmapOptions::new()
-            .map(&file)
-            .map_err(|e| PyIOError::new_err(format!("Failed to memory map file '{}': {}", path, e)))?
+        MmapOptions::new().map(&file).map_err(|e| {
+            PyIOError::new_err(format!("Failed to memory map file '{}': {}", path, e))
+        })?
     };
 
     let tensors = SafeTensors::deserialize(&mmap)
@@ -573,7 +591,13 @@ pub fn scan_safetensors(
                     };
                 }
             };
-            analyze_tensor(name, tensor_view.dtype(), tensor_view.shape().to_vec(), tensor_view.data(), thresholds)
+            analyze_tensor(
+                name,
+                tensor_view.dtype(),
+                tensor_view.shape().to_vec(),
+                tensor_view.data(),
+                thresholds,
+            )
         })
         .collect();
 
@@ -624,13 +648,18 @@ pub fn scan_tensor_bytes(
     exponent_entropy_threshold: f64,
     plane_floor: f64,
 ) -> PyResult<TensorScanResult> {
-    let (parsed, width) = parse_dtype(dtype)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype)))?;
+    let (parsed, width) = parse_dtype(dtype).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype))
+    })?;
     let expected = shape.iter().product::<usize>() * width;
     if expected != data.len() {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "tensor '{}': shape {:?} of {} needs {} bytes, got {}",
-            name, shape, dtype, expected, data.len()
+            name,
+            shape,
+            dtype,
+            expected,
+            data.len()
         )));
     }
     let thresholds = Thresholds {
@@ -806,9 +835,11 @@ mod tests {
     /// Small-magnitude float32 values that look like trained weights (uniform in +-0.02).
     fn weight_like_f32(count: usize, seed: u64) -> Vec<u8> {
         pseudo_random_bytes(count * 4, seed)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|c| {
-                let unit = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64 / u32::MAX as f64;
+                let unit = u32::from_le_bytes(*c) as f64 / u32::MAX as f64;
                 ((unit * 2.0 - 1.0) as f32 * 0.02).to_le_bytes()
             })
             .collect()
@@ -826,11 +857,19 @@ mod tests {
     fn test_exponent_lane_separates_weights_from_random_bytes() {
         let weights = weight_like_f32(20_000, 7);
         let weight_lane = corrected_entropy(&byte_lane(&weights, 4, 3));
-        assert!(weight_lane < 5.0, "weight sign/exponent lane was {}", weight_lane);
+        assert!(
+            weight_lane < 5.0,
+            "weight sign/exponent lane was {}",
+            weight_lane
+        );
 
         let blob = pseudo_random_bytes(80_000, 9);
         let blob_lane = corrected_entropy(&byte_lane(&blob, 4, 3));
-        assert!(blob_lane > 7.5, "random sign/exponent lane was {}", blob_lane);
+        assert!(
+            blob_lane > 7.5,
+            "random sign/exponent lane was {}",
+            blob_lane
+        );
     }
 
     #[test]
@@ -841,19 +880,25 @@ mod tests {
 
         let mut text_bits = weights.clone();
         let payload = b"connect 10.0.0.5:4444 /bin/sh ".repeat(2000);
-        for (index, chunk) in text_bits.chunks_exact_mut(4).enumerate() {
-            let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        for (index, chunk) in text_bits.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let word = u32::from_le_bytes(*chunk);
             let byte = payload[(index / 8) % payload.len()];
             let bit = ((byte >> (index % 8)) & 1) as u32;
-            chunk.copy_from_slice(&((word & !1) | bit).to_le_bytes());
+            *chunk = ((word & !1) | bit).to_le_bytes();
         }
         let structured_plane = plane_entropy(&text_bits, 4, 0);
-        assert!(structured_plane < 7.5, "structured low plane was {}", structured_plane);
+        assert!(
+            structured_plane < 7.5,
+            "structured low plane was {}",
+            structured_plane
+        );
     }
 
     #[test]
     fn test_constant_tensor_is_not_diverse() {
-        let ones: Vec<u8> = std::iter::repeat(1.0f32.to_le_bytes()).take(40_000).flatten().collect();
+        let ones: Vec<u8> = std::iter::repeat_n(1.0f32.to_le_bytes(), 40_000)
+            .flatten()
+            .collect();
         assert!(!has_diverse_values(&ones, 4));
         let weights = weight_like_f32(40_000, 5);
         assert!(has_diverse_values(&weights, 4));
@@ -863,9 +908,11 @@ mod tests {
     fn test_zeroed_low_bits_are_a_constant_plane_not_a_payload() {
         // Upcast low-precision weights, or bits zeroed by disarming, have constant low planes.
         let masked: Vec<u8> = weight_like_f32(50_000, 11)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|c| {
-                let word = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & !0xFFu32;
+                let word = u32::from_le_bytes(*c) & !0xFFu32;
                 word.to_le_bytes()
             })
             .collect();
@@ -874,6 +921,10 @@ mod tests {
 
         let mixed = weight_like_f32(50_000, 11);
         let fraction = plane_one_fraction(&mixed, 4, 0);
-        assert!(fraction > 0.4 && fraction < 0.6, "mixed plane fraction was {}", fraction);
+        assert!(
+            fraction > 0.4 && fraction < 0.6,
+            "mixed plane fraction was {}",
+            fraction
+        );
     }
 }

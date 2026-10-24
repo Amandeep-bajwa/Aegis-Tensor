@@ -40,6 +40,10 @@ fuzzer = [
 ]
 dev = [
     "pytest>=7.0.0",
+    "pytest-cov>=6.0",           # coverage gate in CI
+    "diff-cover>=9.0",           # new code on a PR must be at least 90% covered
+    "ruff==0.16.9",              # pinned: the lint job and local runs must agree
+    "mypy==2.4.0",               # pinned for the same reason
     "maturin>=1.5.0",
     "py7zr>=1.0",  # lets tests (and users) inspect 7z-wrapped checkpoints
     "jsonschema[format]>=4.18",  # validates JSON and SARIF output in tests
@@ -67,3 +71,55 @@ aegis = "aegis.cli:app"
 module-name = "aegis.aegis_core"
 features = ["pyo3/extension-module"]
 python-source = "."
+
+[tool.coverage.run]
+source = ["aegis"]
+# tests/test_cli.py runs the CLI as a subprocess; measure it there too. The sandboxed child
+# gets a minimal environment (aegis/sandbox.py, _child_env), so it is not measured.
+patch = ["subprocess"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+# Deliberate typography in terminal and Markdown output (info sign, multiplication sign, en dash).
+allowed-confusables = ["ℹ", "×", "–"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares CLI parameters as default values; these calls build immutable descriptors.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert by design (S101), and run the aegis CLI as a subprocess with fixed argument
+# lists built from tmp_path (S603).
+"tests/**" = ["S101", "S603"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# The compiled core and optional dependencies, which may be absent (the lint job installs none of
+# them). Everything else must resolve. transformers is optional too: only `aegis fuzz --hf-config`.
+[[tool.mypy.overrides]]
+module = [
+    "aegis.aegis_core",
+    "torch",
+    "torch.*",
+    "transformers",
+    "transformers.*",
+    "onnx",
+    "onnx.*",
+    "h5py",
+    "py7zr",
+    "py7zr.*",
+    "fickling",
+    "fickling.*",
+    "modelscan",
+    "modelscan.*",
+]
+ignore_missing_imports = true

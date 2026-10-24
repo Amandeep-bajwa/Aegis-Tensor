@@ -19,16 +19,13 @@ from pathlib import Path
 import numpy as np
 from safetensors.numpy import save_file
 
-
 MODEL_SIZE = 256
 TEXT_PAYLOAD = b"Aegis-Tensor synthetic steganography payload: connect 10.0.0.5:4444 " * 4000
 
 
 def _clean_weights(rng: np.random.Generator) -> dict[str, np.ndarray]:
     return {
-        f"layer_{index}.weight": rng.normal(
-            loc=0.0, scale=0.02, size=(MODEL_SIZE, MODEL_SIZE)
-        ).astype(np.float32)
+        f"layer_{index}.weight": rng.normal(loc=0.0, scale=0.02, size=(MODEL_SIZE, MODEL_SIZE)).astype(np.float32)
         for index in range(1, 6)
     }
 

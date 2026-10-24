@@ -48,12 +48,13 @@ def whitespace_model(tmp_path):
     save_file({"a.weight": _weights(4)}, str(path))
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    padded = raw[8:8 + n].rstrip(b" ") + b" " * 4096
-    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    padded = raw[8 : 8 + n].rstrip(b" ") + b" " * 4096
+    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     return path
 
 
 # --- Exit 0 -------------------------------------------------------------------
+
 
 @pytest.mark.claim("C16")
 @needs_core
@@ -83,6 +84,7 @@ def test_clean_pickle_exits_0(tmp_path):
 
 
 # --- Exit 1 -------------------------------------------------------------------
+
 
 @pytest.mark.claim("C16")
 @needs_core
@@ -139,6 +141,7 @@ def test_fail_on_is_case_insensitive(overwritten_model):
 
 # --- Exit 2 -------------------------------------------------------------------
 
+
 @pytest.mark.claim("C16")
 def test_missing_file_exits_2(tmp_path):
     assert _scan(tmp_path / "nope.safetensors").exit_code == EXIT_ERROR
@@ -171,6 +174,7 @@ def test_invalid_fail_on_value_exits_2(tmp_path):
 
 # --- JSON report carries the severity -------------------------------------------
 
+
 @needs_core
 def test_json_report_includes_max_severity_and_rules(overwritten_model, tmp_path):
     out = tmp_path / "report.json"
@@ -185,3 +189,41 @@ def test_json_report_includes_max_severity_and_rules(overwritten_model, tmp_path
     assert "exponent_lane" in blob["rules"]
     assert blob["severity"] == "high"
     assert any(f["rule"] == "AEGIS-T002" and f["location"]["tensor"] == "b.weight" for f in file_entry["findings"])
+
+
+# --- Errors are exit 2, never a traceback ------------------------------------------
+
+
+def test_scanning_a_directory_is_an_error_not_a_traceback(tmp_path):
+    result = _scan(tmp_path)
+    assert result.exit_code == EXIT_ERROR
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_disarm_into_its_own_input_is_refused(clean_model):
+    before = clean_model.read_bytes()
+    result = runner.invoke(app, ["disarm", str(clean_model), str(clean_model)])
+    assert result.exit_code == 1
+    assert "Output must be a different file from the input" in result.output
+    assert clean_model.read_bytes() == before
+
+
+def test_disarm_width_reaching_the_exponent_is_refused_even_with_allow_unsafe(clean_model, tmp_path):
+    out = tmp_path / "out.safetensors"
+    result = runner.invoke(app, ["disarm", str(clean_model), str(out), "--low-bits", "23", "--allow-unsafe"])
+    assert result.exit_code == 1
+    assert "exponent" in result.output
+
+
+def test_report_bundle_with_an_unknown_engine_is_an_error(clean_model, tmp_path):
+    result = runner.invoke(
+        app, ["report-bundle", str(clean_model), "--engines", "no-such-engine", "-o", str(tmp_path / "b")]
+    )
+    assert result.exit_code == EXIT_ERROR
+    assert not (tmp_path / "b").exists()
+
+
+def test_report_bundle_on_an_unscannable_path_is_an_error(tmp_path):
+    result = runner.invoke(app, ["report-bundle", str(tmp_path), "-o", str(tmp_path / "b")])
+    assert result.exit_code == EXIT_ERROR
+    assert "Scan failed" in result.output

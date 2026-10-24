@@ -26,9 +26,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 ENGINES = ("fickling", "modelscan")
 TIMEOUT_SECONDS = 300
@@ -46,8 +46,15 @@ _FICKLING_SEVERITY = {
 }
 _MODELSCAN_SEVERITY = {"CRITICAL": "critical", "HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
 # Extension ModelScan needs for each format Aegis detects.
-_MODELSCAN_EXTENSION = {"pickle": ".pkl", "pytorch-legacy": ".pt", "zip": ".pt", "tar": ".pt", "npy": ".npy",
-                        "hdf5": ".h5", "keras": ".keras"}
+_MODELSCAN_EXTENSION = {
+    "pickle": ".pkl",
+    "pytorch-legacy": ".pt",
+    "zip": ".pt",
+    "tar": ".pt",
+    "npy": ".npy",
+    "hdf5": ".h5",
+    "keras": ".keras",
+}
 _LEVELS = ("low", "medium", "high", "critical")
 
 
@@ -61,30 +68,30 @@ class EngineIssue:
 @dataclass
 class EngineResult:
     engine: str
-    version: Optional[str] = None
+    version: str | None = None
     ran: bool = False
-    issues: List[EngineIssue] = field(default_factory=list)
-    error: Optional[str] = None
+    issues: list[EngineIssue] = field(default_factory=list)
+    error: str | None = None
 
     @property
-    def worst(self) -> Optional[str]:
+    def worst(self) -> str | None:
         return max((i.severity for i in self.issues), key=_LEVELS.index, default=None)
 
 
-def available() -> Dict[str, Optional[str]]:
+def available() -> dict[str, str | None]:
     """Installed engines and their versions."""
-    found = {}
+    from importlib.metadata import PackageNotFoundError, version
+
+    found: dict[str, str | None] = {}
     for name in ENGINES:
         try:
-            from importlib.metadata import version
-
             found[name] = version(name)
-        except Exception:
-            continue
+        except PackageNotFoundError:
+            continue  # not installed
     return found
 
 
-def select(requested: str) -> List[str]:
+def select(requested: str) -> list[str]:
     """``auto`` = every installed engine; ``none``; or a comma-separated list (must be installed)."""
     requested = requested.strip().lower()
     if requested == "none":
@@ -102,7 +109,7 @@ def select(requested: str) -> List[str]:
     return names
 
 
-def _console_script(name: str) -> List[str]:
+def _console_script(name: str) -> list[str]:
     """The engine's command, preferring the one installed next to this interpreter."""
     local = Path(sys.executable).parent / name
     if local.exists():
@@ -113,11 +120,14 @@ def _console_script(name: str) -> List[str]:
     raise FileNotFoundError(name)
 
 
-def _run(command: Sequence[str], stdin: Optional[bytes] = None, capture: bool = False):
+def _run(command: Sequence[str], stdin: bytes | None = None, capture: bool = False):
     with tempfile.TemporaryDirectory(prefix="aegis-engine-") as workdir:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTHON", "MODELSCAN"))}
-        completed = subprocess.run(list(command), input=stdin, capture_output=True, cwd=workdir, env=env,
-                                   timeout=TIMEOUT_SECONDS)
+        # argv list without a shell; the command is an engine executable resolved by _console_script,
+        # and the scanned file is passed as a path argument, never interpreted here.
+        completed = subprocess.run(  # noqa: S603
+            list(command), input=stdin, capture_output=True, cwd=workdir, env=env, timeout=TIMEOUT_SECONDS
+        )
     stderr = completed.stderr.decode("utf-8", "replace")[-400:]
     if capture:
         return completed.returncode, completed.stdout.decode("utf-8", "replace"), stderr
@@ -141,7 +151,8 @@ results = check_safety(pickled, analyzer=Analyzer(passes))
 json.dump({"severity": results.severity.name, "analysis": str(results)}, sys.stdout)
 """
 
-def run_fickling(streams: List[Tuple[str, bytes]]) -> EngineResult:
+
+def run_fickling(streams: list[tuple[str, bytes]]) -> EngineResult:
     result = EngineResult("fickling", available().get("fickling"))
     if not streams:
         return result  # nothing pickled: Fickling has no opinion on this file
@@ -167,6 +178,7 @@ def run_fickling(streams: List[Tuple[str, bytes]]) -> EngineResult:
 
 # --- ModelScan -----------------------------------------------------------------------
 
+
 def run_modelscan(path: Path, detected_format: str) -> EngineResult:
     result = EngineResult("modelscan", available().get("modelscan"))
     extension = _MODELSCAN_EXTENSION.get(detected_format)
@@ -182,7 +194,7 @@ def run_modelscan(path: Path, detected_format: str) -> EngineResult:
         os.symlink(Path(path).resolve(), link)
         out = Path(work) / "report.json"
         try:
-            code, stderr = _run(command + ["scan", "-p", str(link), "-r", "json", "-o", str(out)])
+            code, stderr = _run([*command, "scan", "-p", str(link), "-r", "json", "-o", str(out)])
         except subprocess.TimeoutExpired:
             result.error = "timed out"
             return result
@@ -202,8 +214,9 @@ def run_modelscan(path: Path, detected_format: str) -> EngineResult:
     return result
 
 
-def run_engines(names: List[str], path: Path, detected_format: str,
-                streams: List[Tuple[str, bytes]]) -> List[EngineResult]:
+def run_engines(
+    names: list[str], path: Path, detected_format: str, streams: list[tuple[str, bytes]]
+) -> list[EngineResult]:
     results = []
     for name in names:
         try:

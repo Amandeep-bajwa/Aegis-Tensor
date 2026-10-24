@@ -6,7 +6,7 @@ Exit codes:
     2  the scan could not run (missing file, unreadable or malformed container, missing core)
 """
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 LEVELS = ("low", "medium", "high", "critical")
 RANK = {level: index for index, level in enumerate(LEVELS)}
@@ -39,18 +39,18 @@ PICKLE_SEVERITY = {
 }
 
 
-def worst(levels: Iterable[Optional[str]]) -> Optional[str]:
+def worst(levels: Iterable[str | None]) -> str | None:
     """Highest level in ``levels``, or None when there are none."""
     present = [level for level in levels if level is not None]
     return max(present, key=RANK.__getitem__, default=None)
 
 
-def tensor_severity(result) -> Optional[str]:
+def tensor_severity(result) -> str | None:
     """Highest severity among a tensor's triggered rules. Unknown codes count as medium."""
     return worst(TENSOR_RULE_SEVERITY.get(rule, "medium") for rule in result.rules)
 
 
-def exit_code_for(level: Optional[str], fail_on: str) -> int:
+def exit_code_for(level: str | None, fail_on: str) -> int:
     """EXIT_FINDINGS when ``level`` is at or above ``fail_on``, otherwise EXIT_CLEAN."""
     if level is not None and RANK[level] >= RANK[fail_on]:
         return EXIT_FINDINGS

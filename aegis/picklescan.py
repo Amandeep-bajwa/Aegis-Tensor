@@ -24,25 +24,142 @@ import struct
 import tarfile
 import zipfile
 import zlib
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, List, Optional, Tuple, Union
+from typing import IO, cast
 
 # Modules whose import alone means arbitrary code execution or system access.
-DANGEROUS_MODULES = frozenset({
-    "os", "posix", "nt", "subprocess", "sys", "socket", "shutil", "pty", "runpy",
-    "importlib", "ctypes", "multiprocessing", "pickle", "_pickle", "code", "codeop",
-    "commands", "webbrowser", "tempfile", "http", "urllib", "requests", "asyncio",
-})
+DANGEROUS_MODULES = frozenset(
+    {
+        "os",
+        "posix",
+        "nt",
+        "subprocess",
+        "sys",
+        "socket",
+        "shutil",
+        "pty",
+        "runpy",
+        "importlib",
+        "ctypes",
+        "multiprocessing",
+        "pickle",
+        "_pickle",
+        "code",
+        "codeop",
+        "commands",
+        "webbrowser",
+        "tempfile",
+        "http",
+        "urllib",
+        "requests",
+        "asyncio",
+    }
+)
 # Builtins that run code or reach into the interpreter.
-DANGEROUS_BUILTINS = frozenset({
-    "eval", "exec", "compile", "__import__", "getattr", "setattr", "delattr",
-    "open", "breakpoint", "input",
-})
-# Modules that legitimate tensor checkpoints reference. Older pickle protocols
-# name the builtins module `__builtin__`, so both spellings are treated alike.
+DANGEROUS_BUILTINS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "open",
+        "breakpoint",
+        "input",
+    }
+)
+# Older pickle protocols name the builtins module `__builtin__`, so both spellings are treated alike.
 BUILTIN_MODULES = frozenset({"builtins", "__builtin__"})
-SAFE_MODULE_PREFIXES = ("torch", "collections", "numpy", "_codecs", "copyreg")
+# Parts of torch and numpy that run code, load native code or code from elsewhere, or load another
+# pickle without restriction. Checkpoints never import them (tests/test_pickle_allowlist.py).
+DANGEROUS_MODULE_PREFIXES = (
+    "torch.hub",
+    "torch.utils.cpp_extension",
+    "torch.jit",
+    "torch._C",
+    "torch.ops",
+    "torch._ops",
+    "torch.package",
+    "torch.distributed",
+    "torch.multiprocessing",
+    "torch._dynamo",
+    "torch._inductor",
+    "torch.compiler",
+    "numpy.testing",
+    "numpy.f2py",
+    "numpy.distutils",
+    "numpy.ctypeslib",
+)
+DANGEROUS_GLOBALS = frozenset({"torch.load", "torch.serialization.load", "numpy.load", "numpy.lib.npyio.load"})
+# Modules allowed whole: they hold containers and codecs only.
+SAFE_MODULE_PREFIXES = ("collections", "_codecs", "copyreg")
+# Under torch and numpy only the globals that torch.save and numpy files use are allowed; any
+# other name is reported as unrecognised. (Allowing all of torch let torch.hub.load through.)
+_TORCH_DTYPE = re.compile(
+    r"^(b?float|u?int|complex|qu?int|bits)\d\w*$|^(float|double|half|short|int|long|bool|cfloat|cdouble|chalf)$"
+)
+_TORCH_NAMES = frozenset(
+    {
+        "Size",
+        "device",
+        "strided",
+        "sparse_coo",
+        "sparse_csr",
+        "sparse_csc",
+        "sparse_bsr",
+        "sparse_bsc",
+        "_mkldnn",
+        "jagged",
+        "per_tensor_affine",
+        "per_channel_affine",
+        "per_tensor_symmetric",
+        "per_channel_symmetric",
+        "per_channel_affine_float_qparams",
+        "contiguous_format",
+        "channels_last",
+        "channels_last_3d",
+        "preserve_format",
+    }
+)
+_CHECKPOINT_GLOBALS = frozenset(
+    {
+        "torch.serialization._get_layout",
+        "torch.storage.UntypedStorage",
+        "torch.storage.TypedStorage",
+        "torch.storage._load_from_bytes",
+        "torch.nn.parameter.Parameter",
+        "torch.nn.parameter.Buffer",
+        "torch.nn.parameter.UninitializedParameter",
+        "numpy.ndarray",
+        "numpy.dtype",
+        "numpy.core.multiarray._reconstruct",
+        "numpy.core.multiarray.scalar",
+        "numpy._core.multiarray._reconstruct",
+        "numpy._core.multiarray.scalar",
+    }
+)
+
+
+def _checkpoint_global(module: str, name: str) -> bool:
+    """True for the torch and numpy globals that legitimate checkpoints import."""
+    if f"{module}.{name}" in _CHECKPOINT_GLOBALS:
+        return True
+    if module == "torch._utils":
+        return name.startswith("_rebuild_")  # tensor, parameter, sparse, quantized, nested ... rebuilders
+    if module in ("torch", "torch.cuda") and name.endswith("Storage") and name[:1].isupper():
+        return True  # legacy typed storages: torch.FloatStorage, torch.cuda.HalfStorage, ...
+    if module == "torch":
+        return name in _TORCH_NAMES or bool(_TORCH_DTYPE.match(name))
+    if module.startswith("torch.nn.modules.") or module == "torch.nn.functional":
+        return not name.startswith("_")  # full-module pickles: layer classes and activation functions
+    if module == "numpy.dtypes":
+        return name.endswith("DType")
+    return module == "numpy.random._pickle" and name.endswith("_ctor")
+
 
 MAX_KEPT_STREAMS = 64
 MAX_KEPT_STREAM_BYTES = 64 << 20
@@ -57,18 +174,23 @@ MAX_7Z_UNPACKED_BYTES = 2 << 30
 # Unknown files get a best-effort opcode scan of this many leading bytes.
 BEST_EFFORT_BYTES = 1 << 20
 
-STRING_OPS = frozenset({
-    "STRING", "BINSTRING", "SHORT_BINSTRING", "UNICODE", "BINUNICODE",
-    "SHORT_BINUNICODE", "BINUNICODE8",
-})
+STRING_OPS = frozenset(
+    {
+        "STRING",
+        "BINSTRING",
+        "SHORT_BINSTRING",
+        "UNICODE",
+        "BINUNICODE",
+        "SHORT_BINUNICODE",
+        "BINUNICODE8",
+    }
+)
 # Only names that are valid dotted identifiers can be imported. Bytes read while
 # resynchronising after a malformed region often look like GLOBAL opcodes with
 # garbage operands; those cannot execute anything and are not reported.
 _IMPORTABLE = re.compile(r"^[A-Za-z_][\w]*(\.[A-Za-z_][\w]*)*$")
 # Protocol 0 and 1 pickles have no PROTO header; they start with one of these opcodes.
-_PROTO01_FIRST_BYTES = frozenset(
-    op.code.encode("latin-1") for op in pickletools.opcodes if op.proto <= 1
-)
+_PROTO01_FIRST_BYTES = frozenset(op.code.encode("latin-1") for op in pickletools.opcodes if op.proto <= 1)
 
 
 @dataclass
@@ -76,7 +198,7 @@ class PickleFinding:
     severity: str  # CRITICAL | SUSPICIOUS
     message: str
     location: str = ""
-    # Stable machine code: dangerous_import, unknown_import, unresolved_import,
+    # Stable machine code: dangerous_import, unknown_import, unresolved_import, unresolved_callable,
     # extension_registry, malformed_pickle, zip_tampered, no_payload, container_unreadable,
     # archive_7z, malformed_npy, npy_object, unknown_format. See aegis/findings.py.
     code: str = "unknown_format"
@@ -86,11 +208,11 @@ class PickleFinding:
 class PickleScanResult:
     path: str
     format: str = "unknown"
-    findings: List[PickleFinding] = field(default_factory=list)
-    globals_seen: List[str] = field(default_factory=list)
+    findings: list[PickleFinding] = field(default_factory=list)
+    globals_seen: list[str] = field(default_factory=list)
     # When a list, every pickle stream found is copied here as (location, bytes), for the
     # optional engines in aegis/engines.py. None (the default) keeps nothing.
-    streams: Optional[List[Tuple[str, bytes]]] = field(default=None, repr=False, compare=False)
+    streams: list[tuple[str, bytes]] | None = field(default=None, repr=False, compare=False)
 
     @property
     def is_suspicious(self) -> bool:
@@ -108,7 +230,8 @@ class PickleScanResult:
 
 # --- Format detection ----------------------------------------------------------
 
-def detect_format(data: Union[bytes, mmap.mmap], total_size: Optional[int] = None) -> str:
+
+def detect_format(data: bytes | mmap.mmap, total_size: int | None = None) -> str:
     """Identify a model container by its leading bytes. Never trusts the extension.
 
     ``total_size`` is the full file size when ``data`` is only the file's prefix.
@@ -146,15 +269,21 @@ def _parses_as_pickle(data: bytes) -> bool:
 
 # --- Global classification -------------------------------------------------------
 
-def _classify(module: str, name: str) -> Tuple[str, str]:
+
+def _classify(module: str, name: str) -> tuple[str, str]:
     """Return (severity, message) for an imported global, or ("", "") if it is allowed."""
     if module in DANGEROUS_MODULES or module.split(".")[0] in DANGEROUS_MODULES:
         return "CRITICAL", f"imports {module}.{name} (code execution or system access)"
     if module in BUILTIN_MODULES and name in DANGEROUS_BUILTINS:
         return "CRITICAL", f"calls builtins.{name} (runs code)"
-    if module in BUILTIN_MODULES or module.startswith(SAFE_MODULE_PREFIXES):
+    dotted = f"{module}.{name}"
+    if dotted in DANGEROUS_GLOBALS or any(
+        dotted == prefix or dotted.startswith(prefix + ".") for prefix in DANGEROUS_MODULE_PREFIXES
+    ):
+        return "CRITICAL", f"imports {dotted} (runs or loads code, or loads an unrestricted pickle)"
+    if module in BUILTIN_MODULES or module.startswith(SAFE_MODULE_PREFIXES) or _checkpoint_global(module, name):
         return "", ""
-    return "SUSPICIOUS", f"imports unrecognised global {module}.{name}"
+    return "SUSPICIOUS", f"imports unrecognised global {dotted}"
 
 
 def _record(module: str, name: str, result: PickleScanResult, location: str) -> None:
@@ -170,24 +299,89 @@ def _record(module: str, name: str, result: PickleScanResult, location: str) -> 
 
 _MARK = object()
 _UNKNOWN = object()
+BYTES_OPS = frozenset({"BINBYTES", "SHORT_BINBYTES", "BINBYTES8", "BYTEARRAY8"})
+# Globals whose call loads their bytes argument as another checkpoint, so the bytes are scanned too.
+EMBEDDED_LOADERS = frozenset({"torch.storage._load_from_bytes"})
+EMBEDDED_TAG = "[embedded]"
+
+
+@dataclass(frozen=True)
+class _Global:
+    """A global the pickle imported."""
+
+    module: str
+    name: str
+
+    def __str__(self) -> str:
+        return f"{self.module}.{self.name}"
+
+
+@dataclass(frozen=True)
+class _Call:
+    """The value a call returns; only its callable is kept, to name the chain."""
+
+    func: object
+
+    def __str__(self) -> str:
+        return f"{self.func if isinstance(self.func, (_Global, _Call)) else 'an unresolved callable'}(...)"
+
+    @property
+    def root(self) -> object:
+        return self.func.root if isinstance(self.func, _Call) else self.func
 
 
 def _pop(stack: list) -> object:
     return stack.pop() if stack else _UNKNOWN
 
 
-def _pop_to_mark(stack: list) -> None:
+def _pop_to_mark(stack: list) -> list:
+    """Pop down to the topmost MARK and return the items above it, bottom first."""
+    items: list = []
     while stack:
-        if stack.pop() is _MARK:
+        item = stack.pop()
+        if item is _MARK:
+            break
+        items.append(item)
+    return items[::-1]
+
+
+def _check_call(func: object, args: object, result: PickleScanResult, where: str) -> None:
+    """A call the pickle would make when loaded: REDUCE, NEWOBJ, NEWOBJ_EX or OBJ."""
+    if isinstance(func, _Call) and isinstance(func.root, _Global):
+        # Rooted at a real import, so not junk bytes read while resynchronising.
+        result.add(
+            "CRITICAL",
+            f"calls the result of {func}: a callable built at runtime, which cannot be checked statically",
+            where,
+            code="unresolved_callable",
+        )
+    elif isinstance(func, _Global) and str(func) in EMBEDDED_LOADERS:
+        payload = args[0] if isinstance(args, tuple) and args else None
+        if not isinstance(payload, (bytes, bytearray)):
             return
+        depth = where.count(EMBEDDED_TAG)
+        if depth >= MAX_NESTING:
+            result.add("SUSPICIOUS", "embedded pickles nested too deep; not scanned", where, code="unresolved_import")
+        else:
+            _scan_bytes(bytes(payload), result, f"{where}{EMBEDDED_TAG}", depth + 1)
 
 
 def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResult, location: str) -> None:
-    """Apply one opcode to the symbolic stack. Only strings and imports are tracked."""
+    """Apply one opcode to the symbolic stack. Strings, bytes, tuples, imports and the
+    results of calls are tracked; everything else is an unknown value."""
     name = op.name
     where = f"{location}@{offset}"
     if name in STRING_OPS:
         stack.append(arg if isinstance(arg, str) else _UNKNOWN)
+    elif name in BYTES_OPS:
+        stack.append(arg if isinstance(arg, (bytes, bytearray)) else _UNKNOWN)
+    elif name == "EMPTY_TUPLE":
+        stack.append(())
+    elif name in ("TUPLE1", "TUPLE2", "TUPLE3"):
+        items = [_pop(stack) for _ in range(int(name[-1]))]
+        stack.append(tuple(reversed(items)))
+    elif name == "TUPLE":
+        stack.append(tuple(_pop_to_mark(stack)))
     elif name == "MARK":
         stack.append(_MARK)
     elif name == "MEMOIZE":
@@ -201,13 +395,32 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
     elif name in ("GLOBAL", "INST"):
         module, _, attr = str(arg).partition(" ")
         _record(module, attr, result, where)
+        imported = _Global(module, attr)
         if name == "INST":
-            _pop_to_mark(stack)
-        stack.append(_UNKNOWN)
+            _check_call(imported, tuple(_pop_to_mark(stack)), result, where)
+            stack.append(_Call(imported))
+        else:
+            stack.append(imported)
+    elif name in ("REDUCE", "NEWOBJ"):
+        args, func = _pop(stack), _pop(stack)
+        _check_call(func, args, result, where)
+        stack.append(_Call(func))
+    elif name == "NEWOBJ_EX":
+        _kwargs, args, func = _pop(stack), _pop(stack), _pop(stack)
+        _check_call(func, args, result, where)
+        stack.append(_Call(func))
+    elif name == "OBJ":
+        items = _pop_to_mark(stack)
+        func = items[0] if items else _UNKNOWN
+        _check_call(func, tuple(items[1:]), result, where)
+        stack.append(_Call(func))
+    elif name == "BUILD":
+        _pop(stack)  # the state; the object being built stays on the stack
     elif name == "STACK_GLOBAL":
-        attr, module = _pop(stack), _pop(stack)
-        if isinstance(module, str) and isinstance(attr, str):
-            _record(module, attr, result, where)
+        attr_operand, module_operand = _pop(stack), _pop(stack)
+        if isinstance(module_operand, str) and isinstance(attr_operand, str):
+            _record(module_operand, attr_operand, result, where)
+            stack.append(_Global(module_operand, attr_operand))
         else:
             result.add(
                 "SUSPICIOUS",
@@ -215,9 +428,14 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
                 where,
                 code="unresolved_import",
             )
-        stack.append(_UNKNOWN)
+            stack.append(_UNKNOWN)
     elif name.startswith("EXT"):
-        result.add("SUSPICIOUS", f"{name} resolves a global through the copyreg extension registry", where, code="extension_registry")
+        result.add(
+            "SUSPICIOUS",
+            f"{name} resolves a global through the copyreg extension registry",
+            where,
+            code="extension_registry",
+        )
         stack.append(_UNKNOWN)
     else:
         before = op.stack_before
@@ -233,10 +451,10 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
 
 
 def _scan_pickle_stream(
-    data: Union[bytes, mmap.mmap],
+    data: bytes | mmap.mmap,
     result: PickleScanResult,
     location: str,
-    max_pickles: Optional[int] = None,
+    max_pickles: int | None = None,
     report_malformed: bool = True,
     best_effort: bool = False,
 ) -> int:
@@ -251,7 +469,8 @@ def _scan_pickle_stream(
     """
     if best_effort:
         report_malformed = False
-    stream = data if isinstance(data, mmap.mmap) else io.BytesIO(data)
+    # A memory map has the file methods genops uses (read, readline, tell), so it is read in place.
+    stream: IO[bytes] = cast(IO[bytes], data) if isinstance(data, mmap.mmap) else io.BytesIO(data)
     pos, complete, resyncs = 0, 0, 0
     while pos < len(data):
         if max_pickles is not None and complete >= max_pickles:
@@ -262,7 +481,9 @@ def _scan_pickle_stream(
         last_offset = pos - 1
         try:
             finished = False
-            for op, arg, offset in pickletools.genops(stream):
+            for op, arg, position in pickletools.genops(stream):
+                # genops reports None only for streams without tell(); both stream types have it.
+                offset = last_offset + 1 if position is None else position
                 last_offset = offset
                 _step(op, arg, offset, stack, memo, result, location)
                 if op.name == "STOP":
@@ -287,7 +508,12 @@ def _scan_pickle_stream(
             resyncs += 1
             if resyncs > MAX_RESYNCS:
                 if not best_effort:
-                    result.add("SUSPICIOUS", "too many malformed regions; scan stopped early", location, code="malformed_pickle")
+                    result.add(
+                        "SUSPICIOUS",
+                        "too many malformed regions; scan stopped early",
+                        location,
+                        code="malformed_pickle",
+                    )
                 break
             pos = max(pos + 1, last_offset + 1)
             report_malformed = False  # one report per stream; later errors are resync noise
@@ -296,7 +522,7 @@ def _scan_pickle_stream(
 
 def _keep_stream(result: PickleScanResult, location: str, data, start: int, end: int, best_effort: bool) -> None:
     if result.streams is not None and not best_effort and len(result.streams) < MAX_KEPT_STREAMS:
-        result.streams.append((location, bytes(data[start:min(end, start + MAX_KEPT_STREAM_BYTES)])))
+        result.streams.append((location, bytes(data[start : min(end, start + MAX_KEPT_STREAM_BYTES)])))
 
 
 def _is_legacy_torch(data: bytes) -> bool:
@@ -313,14 +539,15 @@ def _is_legacy_torch(data: bytes) -> bool:
 
 # --- Containers ----------------------------------------------------------------
 
+
 def _read_local_entry(data, header_offset: int, method: int, compressed_size: int) -> bytes:
     """Read a zip entry from its local header, ignoring flag bits and CRC like miniz does."""
-    header = bytes(data[header_offset:header_offset + 30])
+    header = bytes(data[header_offset : header_offset + 30])
     if header[:4] != b"PK\x03\x04":
         raise ValueError("local file header signature missing")
     name_len, extra_len = struct.unpack("<HH", header[26:30])
     start = header_offset + 30 + name_len + extra_len
-    raw = bytes(data[start:start + compressed_size])
+    raw = bytes(data[start : start + compressed_size])
     if method == zipfile.ZIP_STORED:
         return raw
     if method == zipfile.ZIP_DEFLATED:
@@ -328,11 +555,16 @@ def _read_local_entry(data, header_offset: int, method: int, compressed_size: in
     raise ValueError(f"unsupported compression method {method}")
 
 
-def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[Tuple[str, bytes]]:
+def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[tuple[str, bytes]]:
     try:
         infos = zipfile.ZipFile(io.BytesIO(data) if isinstance(data, bytes) else data).infolist()
     except (zipfile.BadZipFile, OSError, ValueError) as error:
-        result.add("SUSPICIOUS", f"zip central directory unreadable ({error}); read local headers instead", label, code="zip_tampered")
+        result.add(
+            "SUSPICIOUS",
+            f"zip central directory unreadable ({error}); read local headers instead",
+            label,
+            code="zip_tampered",
+        )
         yield from _zip_local_headers(data, result, label)
         return
     for info in infos:
@@ -350,21 +582,23 @@ def _zip_entries(data, result: PickleScanResult, label: str) -> Iterator[Tuple[s
                 code="zip_tampered",
             )
         if zlib.crc32(payload) & 0xFFFFFFFF != info.CRC:
-            result.add("SUSPICIOUS", "zip entry CRC does not match its contents (tampered archive)", where, code="zip_tampered")
+            result.add(
+                "SUSPICIOUS", "zip entry CRC does not match its contents (tampered archive)", where, code="zip_tampered"
+            )
         yield info.filename, payload
 
 
-def _zip_local_headers(data, result: PickleScanResult, label: str) -> Iterator[Tuple[str, bytes]]:
+def _zip_local_headers(data, result: PickleScanResult, label: str) -> Iterator[tuple[str, bytes]]:
     """Fallback when the central directory is damaged: walk local file headers."""
     blob = bytes(data)
     for match in re.finditer(rb"PK\x03\x04", blob):
         start = match.start()
         if start + 30 > len(blob):
             continue
-        flags, method = struct.unpack("<HH", blob[start + 6:start + 10])
-        csize, _ = struct.unpack("<II", blob[start + 18:start + 26])
-        name_len, extra_len = struct.unpack("<HH", blob[start + 26:start + 30])
-        name = blob[start + 30:start + 30 + name_len].decode("utf-8", "replace")
+        flags, method = struct.unpack("<HH", blob[start + 6 : start + 10])
+        csize, _ = struct.unpack("<II", blob[start + 18 : start + 26])
+        name_len, extra_len = struct.unpack("<HH", blob[start + 26 : start + 30])
+        name = blob[start + 30 : start + 30 + name_len].decode("utf-8", "replace")
         body = start + 30 + name_len + extra_len
         if csize == 0 and flags & 0x8:
             nxt = re.search(rb"PK\x03\x04|PK\x01\x02", blob[body:])
@@ -399,23 +633,115 @@ def _scan_tar(data, result: PickleScanResult, label: str, depth: int) -> None:
     """Legacy torch.save tar: 'pickle' and 'sys_info' are pickles; 'storages' and
     'tensors' start with pickles followed by raw bytes."""
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(bytes(data)), mode="r:")
+        archive = tarfile.open(fileobj=io.BytesIO(bytes(data)), mode="r:")  # noqa: SIM115 - closed below
         members = [m for m in archive.getmembers() if m.isfile()]
     except (tarfile.TarError, OSError) as error:
         result.add("SUSPICIOUS", f"tar archive unreadable ({error})", label, code="container_unreadable")
         return
-    for member in members:
-        handle = archive.extractfile(member)
-        if handle is None:
-            continue
-        payload = handle.read()  # read into memory; nothing is written to disk
-        where = f"{label}:{member.name}"
-        if member.name in ("pickle", "sys_info"):
-            _scan_pickle_stream(payload, result, where)
-        elif member.name in ("storages", "tensors"):
-            _scan_pickle_stream(payload, result, where, max_pickles=1, report_malformed=False)
-        elif depth < MAX_NESTING:
-            _scan_bytes(payload, result, where, depth + 1, report_unknown=False)
+    with archive:
+        for member in members:
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            payload = handle.read()  # read into memory; nothing is written to disk
+            where = f"{label}:{member.name}"
+            if member.name in ("pickle", "sys_info"):
+                _scan_pickle_stream(payload, result, where)
+            elif member.name in ("storages", "tensors"):
+                _scan_legacy_member(payload, result, where, member.name)
+            elif depth < MAX_NESTING:
+                _scan_bytes(payload, result, where, depth + 1, report_unknown=False)
+
+
+# Bytes per element of the typed storages a legacy tar `storages` member names.
+_LEGACY_STORAGE_BYTES = {
+    "DoubleStorage": 8,
+    "FloatStorage": 4,
+    "HalfStorage": 2,
+    "BFloat16Storage": 2,
+    "LongStorage": 8,
+    "IntStorage": 4,
+    "ShortStorage": 2,
+    "CharStorage": 1,
+    "ByteStorage": 1,
+    "BoolStorage": 1,
+    "ComplexDoubleStorage": 16,
+    "ComplexFloatStorage": 8,
+    "QInt8Storage": 1,
+    "QUInt8Storage": 1,
+    "QInt32Storage": 4,
+    "QUInt4x2Storage": 1,
+    "QUInt2x4Storage": 1,
+}
+MAX_LEGACY_NDIM = 64
+
+
+def _scan_one_pickle(data: bytes, start: int, result: PickleScanResult, location: str) -> int | None:
+    """Scan the single pickle at ``start``. Its end offset, or None if it is malformed."""
+    stream = io.BytesIO(data)
+    stream.seek(start)
+    stack: list = []
+    memo: dict = {}
+    offset = start
+    try:
+        for op, arg, position in pickletools.genops(stream):
+            offset = offset if position is None else position
+            _step(op, arg, offset, stack, memo, result, location)
+            if op.name == "STOP":
+                end = stream.tell()
+                _keep_stream(result, f"{location}@{start}", data, start, end, False)
+                return end
+    except Exception:
+        return None
+    return None
+
+
+def _legacy_record_end(data: bytes, end: int, kind: str, imported: list[str]) -> int | None:
+    """Where the next record starts, after the binary data that follows a record's pickle."""
+    if kind == "storages":
+        widths = [
+            _LEGACY_STORAGE_BYTES[g.rsplit(".", 1)[-1]]
+            for g in imported
+            if g.rsplit(".", 1)[-1] in _LEGACY_STORAGE_BYTES
+        ]
+        if not widths:
+            return end  # a pickle without a storage type (the storage views) has no data after it
+        if end + 8 > len(data):
+            return None
+        (count,) = struct.unpack_from("<q", data, end)
+        following = end + 8 + count * widths[-1]
+        return following if count >= 0 and following <= len(data) else None
+    if end + 8 > len(data):
+        return None
+    (ndim,) = struct.unpack_from("<i", data, end)
+    if not 0 <= ndim <= MAX_LEGACY_NDIM:
+        return None
+    following = end + 8 + 16 * ndim + 8  # ndim and padding, sizes and strides, storage offset
+    return following if following <= len(data) else None
+
+
+def _scan_legacy_member(data: bytes, result: PickleScanResult, where: str, kind: str) -> None:
+    """Every pickle in a legacy tar `storages` or `tensors` member, read as torch reads it: a count
+    pickle, then one pickle per record with binary data after it, which is skipped by its stated size
+    so tensor bytes are never parsed as opcodes. A member that cannot be walked is reported, and the
+    rest of it is still scanned for imports."""
+    position: int | None = _scan_one_pickle(data, 0, result, where)
+    failed_at = 0
+    while position is not None and position < len(data):
+        failed_at = position
+        seen = len(result.globals_seen)
+        end = _scan_one_pickle(data, position, result, where)
+        position = None if end is None else _legacy_record_end(data, end, kind, result.globals_seen[seen:])
+        if end is not None and position is None:
+            failed_at = end
+    if position is None:
+        result.add(
+            "SUSPICIOUS",
+            f"legacy `{kind}` member could not be read record by record; the rest was scanned for imports",
+            f"{where}@{failed_at}",
+            code="malformed_pickle",
+        )
+        _scan_pickle_stream(data[failed_at:], result, f"{where}[from byte {failed_at}]", best_effort=True)
 
 
 def _scan_7z(data, result: PickleScanResult, label: str, depth: int) -> None:
@@ -434,7 +760,9 @@ def _scan_7z(data, result: PickleScanResult, label: str, depth: int) -> None:
         with py7zr.SevenZipFile(io.BytesIO(bytes(data)), mode="r") as archive:
             unpacked = sum(f.uncompressed or 0 for f in archive.list())
             if unpacked > MAX_7Z_UNPACKED_BYTES:
-                result.add("SUSPICIOUS", f"7z archive unpacks to {unpacked} bytes; not inspected", label, code="archive_7z")
+                result.add(
+                    "SUSPICIOUS", f"7z archive unpacks to {unpacked} bytes; not inspected", label, code="archive_7z"
+                )
                 return
             entries = _read_7z(archive)
     except Exception as error:
@@ -455,7 +783,8 @@ def _read_7z(archive) -> dict:
     import py7zr
 
     factory = py7zr.io.BytesIOFactory(limit=MAX_7Z_UNPACKED_BYTES)
-    archive.extractall(factory=factory)
+    # Extracts into in-memory buffers capped at MAX_7Z_UNPACKED_BYTES; nothing is written to disk.
+    archive.extractall(factory=factory)  # noqa: S202
     return {name: buffer.read() for name, buffer in factory.products.items()}
 
 
@@ -470,14 +799,14 @@ def _scan_npy(data, result: PickleScanResult, label: str) -> None:
         else:
             (header_len,) = struct.unpack("<I", blob[8:12])
             start = 12
-        header = ast.literal_eval(blob[start:start + header_len].decode("latin-1"))
+        header = ast.literal_eval(blob[start : start + header_len].decode("latin-1"))
         descr = str(header.get("descr", ""))
     except Exception as error:
         result.add("SUSPICIOUS", f"malformed .npy header ({error})", label, code="malformed_npy")
         return
     if "O" in descr:
         result.add("SUSPICIOUS", "object-dtype numpy array: loading it requires unpickling", label, code="npy_object")
-        _scan_pickle_stream(blob[start + header_len:], result, f"{label}[object data]")
+        _scan_pickle_stream(blob[start + header_len :], result, f"{label}[object data]")
 
 
 def _scan_bytes(data, result: PickleScanResult, label: str, depth: int, report_unknown: bool = True) -> bool:
@@ -520,7 +849,7 @@ def _scan_bytes(data, result: PickleScanResult, label: str, depth: int, report_u
     return False
 
 
-def detect_file_format(path: Union[str, Path]) -> str:
+def detect_file_format(path: str | Path) -> str:
     """Format of the file at ``path``, read from its first 64 KiB and its size."""
     path = Path(path)
     size = path.stat().st_size
@@ -529,7 +858,7 @@ def detect_file_format(path: Union[str, Path]) -> str:
     return detect_format(prefix, total_size=size) if prefix else "unknown"
 
 
-def scan_pickle_file(path: Union[str, Path], keep_streams: bool = False) -> PickleScanResult:
+def scan_pickle_file(path: str | Path, keep_streams: bool = False) -> PickleScanResult:
     """Scan a model file without loading it. The format is taken from its bytes.
 
     ``keep_streams`` copies each pickle stream into ``result.streams`` for the optional engines.

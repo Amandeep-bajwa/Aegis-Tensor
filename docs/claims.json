@@ -7,7 +7,7 @@
     },
     {
       "id": "C02",
-      "text": "Detects pickle imports of code-execution primitives (for example `os.system`, `builtins.eval`) in raw pickles, PyTorch zip and legacy tar checkpoints, numpy object arrays and 7z archives, whatever the file extension."
+      "text": "Detects pickle imports of code-execution primitives (for example `os.system`, `builtins.eval`, `torch.hub.load`, `torch.utils.cpp_extension.load_inline`) in raw pickles, PyTorch zip and legacy tar checkpoints, numpy object arrays and 7z archives, whatever the file extension."
     },
     {
       "id": "C03",
@@ -103,6 +103,10 @@
     {
       "id": "C20",
       "text": "`aegis report-bundle` writes a folder for you to review: findings, SHA-256 hashes, repository URL and revision. It never sends anything and never copies the model file."
+    },
+    {
+      "id": "C21",
+      "text": "Flags a pickle that calls a callable built at runtime (the result of another call), even through the memo, and scans pickles embedded in PyTorch storages."
     },
     {
       "id": "L01",

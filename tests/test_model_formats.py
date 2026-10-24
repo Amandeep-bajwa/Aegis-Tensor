@@ -35,8 +35,10 @@ def _scan_json(path):
 
 # --- GGUF ----------------------------------------------------------------------
 
+
 def gguf_bytes(metadata, tensors, alignment=32) -> bytes:
     """GGUF v3. metadata: [(key, value)] with str or int values; tensors: [(name, dims, ggml_type, raw)]."""
+
     def s(text):
         raw = text.encode()
         return struct.pack("<Q", len(raw)) + raw
@@ -58,8 +60,12 @@ def gguf_bytes(metadata, tensors, alignment=32) -> bytes:
 @needs_core
 def test_gguf_clean_model_has_no_findings(tmp_path):
     path = tmp_path / "clean.gguf"
-    path.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
-                                [("blk.0.attn_q.weight", [1 << 16], 0, _weights().tobytes())]))
+    path.write_bytes(
+        gguf_bytes(
+            [("general.alignment", 32), ("tokenizer.chat_template", CLEAN_TEMPLATE)],
+            [("blk.0.attn_q.weight", [1 << 16], 0, _weights().tobytes())],
+        )
+    )
     assert sniff_format(path) == "gguf"
     code, entry = _scan_json(path)
     assert code == 0 and entry["findings"] == []
@@ -94,7 +100,8 @@ def test_gguf_overwritten_float_tensor_gets_tensor_rules(tmp_path):
     code, entry = _scan_json(path)
     assert code == 1
     assert {"rule": "AEGIS-T002", "tensor": "bad"} in [
-        {"rule": f["rule"], "tensor": f["location"].get("tensor")} for f in entry["findings"]]
+        {"rule": f["rule"], "tensor": f["location"].get("tensor")} for f in entry["findings"]
+    ]
 
 
 @needs_core
@@ -116,6 +123,7 @@ def test_truncated_gguf_is_malformed_not_a_crash(tmp_path):
 
 # --- Keras ---------------------------------------------------------------------
 
+
 def keras_file(path, layers):
     config = {"class_name": "Sequential", "config": {"name": "seq", "layers": layers}}
     with zipfile.ZipFile(path, "w") as archive:
@@ -124,12 +132,24 @@ def keras_file(path, layers):
     return path
 
 
-DENSE = {"module": "keras.layers", "class_name": "Dense", "config": {"name": "dense", "units": 4}, "registered_name": None}
-LAMBDA = {"module": "keras.layers", "class_name": "Lambda",
-          "config": {"name": "sneaky", "function": {"class_name": "__lambda__", "config": {"code": "4wEAAAAA"}}},
-          "registered_name": None}
-CUSTOM = {"module": "evil_pkg.layers", "class_name": "Backdoor", "config": {"name": "bd"},
-          "registered_name": "evil_pkg>Backdoor"}
+DENSE = {
+    "module": "keras.layers",
+    "class_name": "Dense",
+    "config": {"name": "dense", "units": 4},
+    "registered_name": None,
+}
+LAMBDA = {
+    "module": "keras.layers",
+    "class_name": "Lambda",
+    "config": {"name": "sneaky", "function": {"class_name": "__lambda__", "config": {"code": "4wEAAAAA"}}},
+    "registered_name": None,
+}
+CUSTOM = {
+    "module": "evil_pkg.layers",
+    "class_name": "Backdoor",
+    "config": {"name": "bd"},
+    "registered_name": "evil_pkg>Backdoor",
+}
 
 
 def test_clean_keras_model_has_no_findings(tmp_path):
@@ -165,12 +185,18 @@ def test_legacy_h5_model_config_and_weights_are_checked(tmp_path):
 
 # --- ONNX ----------------------------------------------------------------------
 
+
 def onnx_model(path, initializers, nodes):
     onnx = pytest.importorskip("onnx")
     from onnx import helper
 
-    graph = helper.make_graph(nodes, "g", [helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1, 4])],
-                              [helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1, 4])], initializers)
+    graph = helper.make_graph(
+        nodes,
+        "g",
+        [helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1, 4])],
+        [helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1, 4])],
+        initializers,
+    )
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
     path.write_bytes(model.SerializeToString())
     return path
@@ -192,8 +218,9 @@ def _external_init(name, location):
 @needs_core
 def test_clean_onnx_model_has_no_findings(tmp_path):
     onnx = pytest.importorskip("onnx")
-    path = onnx_model(tmp_path / "clean.onnx", [_float_init("w", _weights())],
-                      [onnx.helper.make_node("Identity", ["x"], ["y"])])
+    path = onnx_model(
+        tmp_path / "clean.onnx", [_float_init("w", _weights())], [onnx.helper.make_node("Identity", ["x"], ["y"])]
+    )
     assert sniff_format(path) == "onnx"
     code, entry = _scan_json(path)
     assert code == 0 and entry["findings"] == []
@@ -206,8 +233,11 @@ def test_onnx_external_paths_custom_ops_and_tensor_rules(tmp_path):
     onnx = pytest.importorskip("onnx")
     path = onnx_model(
         tmp_path / "evil.onnx",
-        [_external_init("leak", "../../../etc/passwd"), _external_init("ok_ext", "weights.bin"),
-         _float_init("bad", np.frombuffer(_blob(), dtype=np.float32))],
+        [
+            _external_init("leak", "../../../etc/passwd"),
+            _external_init("ok_ext", "weights.bin"),
+            _float_init("bad", np.frombuffer(_blob(), dtype=np.float32)),
+        ],
         [onnx.helper.make_node("Steal", ["x"], ["y"], domain="evil.ops", name="steal")],
     )
     code, entry = _scan_json(path)
@@ -219,3 +249,22 @@ def test_onnx_external_paths_custom_ops_and_tensor_rules(tmp_path):
     assert ("AEGIS-T002", "bad") in found
     severities = {f["rule"]: f["severity"] for f in entry["findings"]}
     assert severities["AEGIS-X001"] == "high" and severities["AEGIS-X002"] == "low"
+
+
+def test_gguf_tensor_pointing_past_the_end_is_flagged(tmp_path):
+    full = gguf_bytes([("general.alignment", 32)], [("blk.0.attn_q.weight", [1 << 16], 0, _weights().tobytes())])
+    path = tmp_path / "truncated.gguf"
+    path.write_bytes(full[:-4096])
+    code, entry = _scan_json(path)
+    assert code == 1
+    assert any("points past the end of the file" in f["message"] for f in entry["findings"]), entry["findings"]
+
+
+def test_gguf_text_report_lists_findings(tmp_path):
+    path = tmp_path / "evil.gguf"
+    template = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
+    path.write_bytes(gguf_bytes([("general.alignment", 32), ("tokenizer.chat_template", template)], []))
+    result = runner.invoke(app, ["scan", str(path)])
+    assert result.exit_code == 1
+    assert "format: gguf" in result.output
+    assert "tokenizer.chat_template" in result.output

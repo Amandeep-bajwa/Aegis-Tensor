@@ -29,8 +29,10 @@ def _must_run(item) -> bool:
         return False
     claims = [_CLAIMS.get(claim_id, {}) for claim_id in marker.args]
     # A pending claim is not shown as a claim, so its test may skip.
-    return any(c.get("status") != "pending" and (c.get("platform") is None or sys.platform.startswith(c["platform"]))
-               for c in claims)
+    return any(
+        c.get("status") != "pending" and (c.get("platform") is None or sys.platform.startswith(c["platform"]))
+        for c in claims
+    )
 
 
 @pytest.hookimpl(hookwrapper=True)

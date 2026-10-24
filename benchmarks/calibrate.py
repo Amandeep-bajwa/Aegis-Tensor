@@ -29,7 +29,6 @@ import argparse
 import json
 import os
 import shutil
-import statistics
 import sys
 import time
 from collections import defaultdict
@@ -186,6 +185,7 @@ GGUF_HEADER_ONLY: list[tuple[str, str]] = [
 
 # --- Hub access ------------------------------------------------------------------
 
+
 def resolve_lock(api, refresh: bool) -> dict:
     """Commit hash per repo, resolved once and then reused."""
     lock = json.loads(LOCK_PATH.read_text()) if LOCK_PATH.exists() and not refresh else {}
@@ -235,18 +235,20 @@ def evict_repo(cache: Path, repo: str) -> None:
 
 # --- Scanning ----------------------------------------------------------------------
 
+
 def scan_file(path: Path) -> dict:
     from aegis import scan_safetensors
     from aegis.formatscan import scan_safetensors_header
 
-    tensors = []
     t = DEFAULT_THRESHOLDS
     results = scan_safetensors(str(path), t["entropy"], t["benford"], t["exponent"], t["plane"])
     header = scan_safetensors_header(path)
     return {
         "tensors": [_tensor_record(r) for r in results],
-        "header_findings": [{"channel": f.channel, "where": f.where, "message": f.message,
-                             "severity": HEADER_SEVERITY[f.channel]} for f in header.findings],
+        "header_findings": [
+            {"channel": f.channel, "where": f.where, "message": f.message, "severity": HEADER_SEVERITY[f.channel]}
+            for f in header.findings
+        ],
     }
 
 
@@ -264,19 +266,28 @@ def _tensor_record(r) -> dict:
 
 
 def _container_findings(result) -> list[dict]:
-    from aegis.findings import RULE_BY_CODE, RULES as CATALOG
+    from aegis.findings import RULE_BY_CODE
+    from aegis.findings import RULES as CATALOG
 
-    return [{"channel": f.code, "where": f.location, "message": f.message,
-             "severity": "critical" if f.severity == "CRITICAL" else CATALOG[RULE_BY_CODE[f.code]]["severity"]}
-            for f in result.findings]
+    return [
+        {
+            "channel": f.code,
+            "where": f.location,
+            "message": f.message,
+            "severity": "critical" if f.severity == "CRITICAL" else CATALOG[RULE_BY_CODE[f.code]]["severity"],
+        }
+        for f in result.findings
+    ]
 
 
 def scan_gguf_file(path: Path) -> dict:
     from aegis.modelformats import scan_model_format
 
     result = scan_model_format(path, "gguf", DEFAULT_THRESHOLDS)
-    return {"tensors": [_tensor_record(r) for r in result.tensor_results],
-            "header_findings": _container_findings(result)}
+    return {
+        "tensors": [_tensor_record(r) for r in result.tensor_results],
+        "header_findings": _container_findings(result),
+    }
 
 
 def scan_gguf_header(repo: str, filename: str, sha: str) -> dict:
@@ -290,10 +301,10 @@ def scan_gguf_header(repo: str, filename: str, sha: str) -> dict:
         data = handle.read(size)
         while True:
             try:
-                metadata, infos, end = parse_gguf_header(data)
+                metadata, _infos, end = parse_gguf_header(data)
                 break
             except ValueError as error:
-                if "truncated" not in str(error) and "past the end" not in str(error) or size >= 256 << 20:
+                if ("truncated" not in str(error) and "past the end" not in str(error)) or size >= 256 << 20:
                     raise
                 more = handle.read(size)
                 size *= 2
@@ -304,8 +315,12 @@ def scan_gguf_header(repo: str, filename: str, sha: str) -> dict:
     templates = chat_templates(metadata)
     for key, text in templates.items():
         _check_template(text, result, f"{filename}:{key}")
-    return {"header_bytes": end, "templates": {k: len(v) for k, v in templates.items()},
-            "tensors": [], "header_findings": _container_findings(result)}
+    return {
+        "header_bytes": end,
+        "templates": {k: len(v) for k, v in templates.items()},
+        "tensors": [],
+        "header_findings": _container_findings(result),
+    }
 
 
 def scan_repo(api, repo: str, family: str, sha: str, cache: Path, max_gb: float, evict: bool) -> dict:
@@ -331,7 +346,9 @@ def scan_repo(api, repo: str, family: str, sha: str, cache: Path, max_gb: float,
             started = time.time()
             local = hf_hub_download(repo, sibling.rfilename, revision=sha, cache_dir=str(cache))
             scanned = scan_file(Path(local))
-            scanned.update({"file": sibling.rfilename, "bytes": sibling.size, "seconds": round(time.time() - started, 1)})
+            scanned.update(
+                {"file": sibling.rfilename, "bytes": sibling.size, "seconds": round(time.time() - started, 1)}
+            )
             record["files"].append(scanned)
     finally:
         if evict:
@@ -342,8 +359,15 @@ def scan_repo(api, repo: str, family: str, sha: str, cache: Path, max_gb: float,
 def scan_gguf_repo(api, repo: str, filename: str, sha: str, cache: Path, evict: bool, header_only: bool) -> dict:
     from huggingface_hub import hf_hub_download
 
-    record = {"repo": repo, "family": "gguf", "kind": "gguf_header" if header_only else "gguf", "file": filename,
-              "sha": sha, "files": [], "skipped": None}
+    record = {
+        "repo": repo,
+        "family": "gguf",
+        "kind": "gguf_header" if header_only else "gguf",
+        "file": filename,
+        "sha": sha,
+        "files": [],
+        "skipped": None,
+    }
     info = api.model_info(repo, revision=sha, files_metadata=True)
     sizes = {s.rfilename: s.size or 0 for s in info.siblings}
     if filename not in sizes:
@@ -374,7 +398,13 @@ class DiskFull(RuntimeError):
 # --- Aggregation and report ----------------------------------------------------------
 
 RULES = ("pooled_entropy", "exponent_lane", "out_of_range", "low_plane", "unreadable")
-SEVERITY = {"unreadable": "high", "exponent_lane": "high", "out_of_range": "high", "low_plane": "high", "pooled_entropy": "medium"}
+SEVERITY = {
+    "unreadable": "high",
+    "exponent_lane": "high",
+    "out_of_range": "high",
+    "low_plane": "high",
+    "pooled_entropy": "medium",
+}
 HEADER_SEVERITY = {"metadata": "high", "header_whitespace": "medium", "tensor_name": "medium", "secret": "medium"}
 LEVELS = ["low", "medium", "high", "critical"]
 GROUPS = {
@@ -423,8 +453,9 @@ def summary(results: list[dict]) -> dict:
             "fingerprints": sorted({r.get("fingerprint") for r in records}, key=str),
         }
     templates = [r for r in results if r.get("files") and r.get("kind") in ("gguf", "gguf_header")]
-    template_findings = [f for r in templates for f in r["files"][0]["header_findings"]
-                         if f["channel"].startswith("gguf_template")]
+    template_findings = [
+        f for r in templates for f in r["files"][0]["header_findings"] if f["channel"].startswith("gguf_template")
+    ]
     out["templates"] = {
         "files": len(templates),
         "templates": sum(len(r["files"][0].get("templates") or {}) for r in templates),
@@ -443,8 +474,13 @@ def _quantiles(values: list[float]) -> str:
     if not values:
         return "—"
     values = sorted(values)
-    pick = lambda q: values[min(len(values) - 1, int(q * (len(values) - 1)))]
-    return f"min {values[0]:.3f} · p1 {pick(0.01):.3f} · p50 {pick(0.5):.3f} · p99 {pick(0.99):.3f} · max {values[-1]:.3f}"
+
+    def pick(q):
+        return values[min(len(values) - 1, int(q * (len(values) - 1)))]
+
+    return (
+        f"min {values[0]:.3f} · p1 {pick(0.01):.3f} · p50 {pick(0.5):.3f} · p99 {pick(0.99):.3f} · max {values[-1]:.3f}"
+    )
 
 
 def render_report(results: list[dict], lock: dict) -> str:
@@ -475,9 +511,18 @@ def render_report(results: list[dict], lock: dict) -> str:
                             examples[(rule, t["dtype"])].append(f"`{record['repo']}` · `{t['name']}`")
         o = model_outcome(record)
         name = record["repo"] + (f" · `{record['files'][0]['file']}`" if record.get("kind") == "gguf" else "")
-        model_rows.append((name, family, record["sha"][:10], ", ".join(o["dtypes"]), o["tensors"],
-                           ", ".join(f"{k}×{v}" for k, v in sorted(o["rules"].items())) or "—",
-                           ", ".join(sorted({f["channel"] for f in o["other"]})) or "—", o["worst"]))
+        model_rows.append(
+            (
+                name,
+                family,
+                record["sha"][:10],
+                ", ".join(o["dtypes"]),
+                o["tensors"],
+                ", ".join(f"{k}×{v}" for k, v in sorted(o["rules"].items())) or "—",
+                ", ".join(sorted({f["channel"] for f in o["other"]})) or "—",
+                o["worst"],
+            )
+        )
 
     numbers = summary(results)
     total_tensors = sum(v["tensors"] for v in by_dtype.values())
@@ -498,8 +543,10 @@ def render_report(results: list[dict], lock: dict) -> str:
     ]
     for group, label in GROUPS.items():
         g = numbers[group]
-        lines.append(f"| {label} | {g['models']} | {g['tensors']} | {_pct(g['flagged'], g['models'])} | "
-                     f"{_pct(g['flagged_high'], g['models'])} |")
+        lines.append(
+            f"| {label} | {g['models']} | {g['tensors']} | {_pct(g['flagged'], g['models'])} | "
+            f"{_pct(g['flagged_high'], g['models'])} |"
+        )
     t = numbers["templates"]
     lines += [
         "",
@@ -527,7 +574,9 @@ def render_report(results: list[dict], lock: dict) -> str:
         "|---|---|" + "---|" * len(RULES),
     ]
     for dtype, row in sorted(by_dtype.items(), key=lambda kv: -kv[1]["tensors"]):
-        lines.append(f"| {dtype} | {row['tensors']} | " + " | ".join(_pct(row[r], row["tensors"]) for r in RULES) + " |")
+        lines.append(
+            f"| {dtype} | {row['tensors']} | " + " | ".join(_pct(row[r], row["tensors"]) for r in RULES) + " |"
+        )
     lines += [
         "",
         "## Per-rule false-positive rate by model family (tensor level)",
@@ -536,10 +585,17 @@ def render_report(results: list[dict], lock: dict) -> str:
         "|---|---|" + "---|" * len(RULES),
     ]
     for family, row in sorted(by_family.items()):
-        lines.append(f"| {family} | {row['tensors']} | " + " | ".join(_pct(row[r], row["tensors"]) for r in RULES) + " |")
-    lines += ["", "## Metric distributions by dtype", "",
-              "Clean-model distributions behind each rule. Defaults: pooled entropy > 7.92 (tensors ≥ 4 KiB),",
-              "exponent lane > 6.5, out-of-range fraction > 0.001, low plane < 7.5.", ""]
+        lines.append(
+            f"| {family} | {row['tensors']} | " + " | ".join(_pct(row[r], row["tensors"]) for r in RULES) + " |"
+        )
+    lines += [
+        "",
+        "## Metric distributions by dtype",
+        "",
+        "Clean-model distributions behind each rule. Defaults: pooled entropy > 7.92 (tensors ≥ 4 KiB),",
+        "exponent lane > 6.5, out-of-range fraction > 0.001, low plane < 7.5.",
+        "",
+    ]
     for dtype in sorted(metrics):
         lines.append(f"**{dtype}**")
         lines.append("")
@@ -575,12 +631,13 @@ def write_report(results: list[dict], lock: dict) -> None:
     if REPORT_PATH.exists():  # keep hand-written proposals across regenerations
         old = REPORT_PATH.read_text()
         if PROPOSALS_START in old and PROPOSALS_END in old:
-            kept = old[old.index(PROPOSALS_START):old.index(PROPOSALS_END) + len(PROPOSALS_END)]
-            text = text[:text.index(PROPOSALS_START)] + kept + text[text.index(PROPOSALS_END) + len(PROPOSALS_END):]
+            kept = old[old.index(PROPOSALS_START) : old.index(PROPOSALS_END) + len(PROPOSALS_END)]
+            text = text[: text.index(PROPOSALS_START)] + kept + text[text.index(PROPOSALS_END) + len(PROPOSALS_END) :]
     REPORT_PATH.write_text(text)
 
 
 # --- Entry point ---------------------------------------------------------------------
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -590,8 +647,12 @@ def main() -> int:
     parser.add_argument("--refresh-lock", action="store_true", help="re-resolve revisions instead of using the lock")
     parser.add_argument("--report-only", action="store_true", help="rebuild the report from existing results")
     parser.add_argument("--only", nargs="*", help="scan only these repos")
-    parser.add_argument("--sets", nargs="*", choices=["safetensors", "gguf", "gguf_header"],
-                        default=["safetensors", "gguf", "gguf_header"])
+    parser.add_argument(
+        "--sets",
+        nargs="*",
+        choices=["safetensors", "gguf", "gguf_header"],
+        default=["safetensors", "gguf", "gguf_header"],
+    )
     args = parser.parse_args()
 
     from huggingface_hub import HfApi
@@ -603,15 +664,21 @@ def main() -> int:
     results = [r for r in results if r.get("fingerprint") == current or r.get("skipped")]  # stale rules: rescan
     done = {record_key(r) for r in results}
 
-    jobs = [("safetensors", repo, family) for repo, family in MODELS] \
-        + [("gguf", repo, file) for repo, file in GGUF_FULL] \
+    jobs = (
+        [("safetensors", repo, family) for repo, family in MODELS]
+        + [("gguf", repo, file) for repo, file in GGUF_FULL]
         + [("gguf_header", repo, file) for repo, file in GGUF_HEADER_ONLY]
+    )
     if not args.report_only:
         RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         for index, (kind, repo, extra) in enumerate(jobs, 1):
             key = (kind, repo, None if kind == "safetensors" else extra)
-            if key in done or kind not in args.sets or (args.only and repo not in args.only) \
-                    or lock.get(repo, {}).get("sha") is None:
+            if (
+                key in done
+                or kind not in args.sets
+                or (args.only and repo not in args.only)
+                or lock.get(repo, {}).get("sha") is None
+            ):
                 continue
             sha = lock[repo]["sha"]
             print(f"[{index}/{len(jobs)}] {kind} {repo}" + (f" {extra}" if kind != "safetensors" else ""), flush=True)
@@ -624,9 +691,15 @@ def main() -> int:
                 print(f"stopping: {error}. Free space or pass --evict, then re-run to resume.", flush=True)
                 break
             except Exception as error:
-                record = {"repo": repo, "family": extra if kind == "safetensors" else "gguf", "kind": kind,
-                          "sha": sha, "files": [], "file": None if kind == "safetensors" else extra,
-                          "skipped": f"error: {type(error).__name__}: {str(error)[:160]}"}
+                record = {
+                    "repo": repo,
+                    "family": extra if kind == "safetensors" else "gguf",
+                    "kind": kind,
+                    "sha": sha,
+                    "files": [],
+                    "file": None if kind == "safetensors" else extra,
+                    "skipped": f"error: {type(error).__name__}: {str(error)[:160]}",
+                }
             record["fingerprint"] = current
             results = [r for r in results if record_key(r) != record_key(record)] + [record]
             done.add(record_key(record))

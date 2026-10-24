@@ -7,16 +7,19 @@ import os
 import pickle
 import struct
 import zipfile
-import zlib
 
 import numpy as np
 import pytest
-import torch
 from typer.testing import CliRunner
 
+from aegis import TORCH_AVAILABLE
 from aegis.cli import app
 from aegis.picklescan import detect_file_format, scan_pickle_file
 
+if TORCH_AVAILABLE:
+    import torch
+
+needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
 runner = CliRunner()
 
 
@@ -34,11 +37,22 @@ def memo_assembled_system(marker) -> bytes:
     """
     return (
         b"\x80\x04"
-        + _u("os") + b"\x94" + _u("system") + b"\x94"   # MEMOIZE -> memo 0, 1
-        + _u("torch") + b"\x94" + _u("nn") + b"\x94"    # decoys
-        + b"00"                                         # POP, POP
-        + b"h\x00" + b"h\x01" + b"\x93"                 # BINGET 0, BINGET 1, STACK_GLOBAL
-        + _u(f"touch {marker}") + b"\x85" + b"R" + b"." # TUPLE1, REDUCE, STOP
+        + _u("os")
+        + b"\x94"
+        + _u("system")
+        + b"\x94"  # MEMOIZE -> memo 0, 1
+        + _u("torch")
+        + b"\x94"
+        + _u("nn")
+        + b"\x94"  # decoys
+        + b"00"  # POP, POP
+        + b"h\x00"
+        + b"h\x01"
+        + b"\x93"  # BINGET 0, BINGET 1, STACK_GLOBAL
+        + _u(f"touch {marker}")
+        + b"\x85"
+        + b"R"
+        + b"."  # TUPLE1, REDUCE, STOP
     )
 
 
@@ -60,6 +74,7 @@ def _write(path, data: bytes):
 
 # --- (b) stack and memo simulation ---------------------------------------------
 
+
 @pytest.mark.claim("C01", "C03")
 def test_memo_assembled_os_system_is_resolved(tmp_path, marker):
     result = scan_pickle_file(_write(tmp_path / "m.pkl", memo_assembled_system(marker)))
@@ -75,11 +90,17 @@ def test_long_binput_and_get_variants_are_resolved(tmp_path, marker):
     # PUT/GET (protocol 0 text), BINPUT/BINGET and LONG_BINPUT/LONG_BINGET memo opcodes.
     payload = (
         b"\x80\x04"
-        + _u("subprocess") + b"p7\n"                      # PUT 7
-        + _u("check_call") + b"r\x00\x01\x00\x00"         # LONG_BINPUT 256
-        + b"0" + b"0"
-        + b"g7\n" + b"j\x00\x01\x00\x00" + b"\x93"        # GET 7, LONG_BINGET 256, STACK_GLOBAL
-        + b"N" + b"."
+        + _u("subprocess")
+        + b"p7\n"  # PUT 7
+        + _u("check_call")
+        + b"r\x00\x01\x00\x00"  # LONG_BINPUT 256
+        + b"0"
+        + b"0"
+        + b"g7\n"
+        + b"j\x00\x01\x00\x00"
+        + b"\x93"  # GET 7, LONG_BINGET 256, STACK_GLOBAL
+        + b"N"
+        + b"."
     )
     result = scan_pickle_file(_write(tmp_path / "m.pkl", payload))
     assert "subprocess.check_call" in result.globals_seen
@@ -105,6 +126,7 @@ def test_protocol_0_global_is_detected(tmp_path, marker):
 
 
 # --- (a) routing by magic bytes -----------------------------------------------
+
 
 @pytest.mark.claim("C01", "C02")
 def test_renamed_extension_is_routed_by_magic_bytes(tmp_path, marker):
@@ -168,6 +190,7 @@ def test_payload_behind_junk_prefix_is_found_by_best_effort_scan(tmp_path, marke
 
 # --- (c) continue past malformed opcodes --------------------------------------
 
+
 @pytest.mark.claim("C01", "C03")
 def test_broken_stream_after_payload(tmp_path, marker):
     payload = memo_assembled_system(marker)[:-1] + b"\xff\xfe broken tail"
@@ -184,6 +207,7 @@ def test_every_global_is_reported_across_a_malformed_region(tmp_path, marker):
     assert "builtins.eval" in result.globals_seen
 
 
+@needs_torch
 def test_legacy_torch_format_is_clean_and_its_storage_tail_is_not_parsed(tmp_path):
     path = tmp_path / "legacy.pt"
     torch.save({"w": torch.randn(64, 64)}, path, _use_new_zipfile_serialization=False)
@@ -195,8 +219,14 @@ def test_legacy_torch_format_is_clean_and_its_storage_tail_is_not_parsed(tmp_pat
 @pytest.mark.claim("C02")
 def test_payload_in_legacy_torch_object_pickle_is_found(tmp_path, marker):
     magic = pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
-    path = _write(tmp_path / "legacy.pt", magic + pickle.dumps(1001, protocol=2) + pickle.dumps({}, protocol=2)
-                  + memo_assembled_system(marker) + pickle.dumps([], protocol=2))
+    path = _write(
+        tmp_path / "legacy.pt",
+        magic
+        + pickle.dumps(1001, protocol=2)
+        + pickle.dumps({}, protocol=2)
+        + memo_assembled_system(marker)
+        + pickle.dumps([], protocol=2),
+    )
     result = scan_pickle_file(path)
     assert result.format == "pytorch-legacy"
     assert any(f.code == "dangerous_import" and "os.system" in f.message for f in result.findings), result.findings
@@ -218,6 +248,7 @@ def test_payload_in_legacy_tar_checkpoint_is_found(tmp_path, marker):
 
 
 # --- (d) tampered zip entries -------------------------------------------------
+
 
 def _torch_style_zip(payload: bytes) -> bytes:
     buffer = io.BytesIO()
@@ -269,9 +300,184 @@ def test_zip_with_damaged_central_directory_falls_back_to_local_headers(tmp_path
     assert any("central directory unreadable" in f.message for f in result.findings)
 
 
+@needs_torch
 def test_real_torch_checkpoint_is_clean(tmp_path):
     path = tmp_path / "clean.pt"
     torch.save(torch.nn.Linear(8, 4).state_dict(), path)
     result = scan_pickle_file(path)
     assert result.format == "zip"
     assert not result.is_suspicious, result.findings
+
+
+# --- (e) less common routes ------------------------------------------------------
+
+
+def test_ext_opcode_is_reported(tmp_path):
+    """EXT1 fetches a callable from copyreg's extension registry, so its name never appears."""
+    path = _write(tmp_path / "ext.pkl", b"\x80\x02\x82\x01)R.")
+    result = scan_pickle_file(path)
+    assert any(f.code == "extension_registry" for f in result.findings), result.findings
+
+
+def _legacy_tar(path, members):
+    import tarfile
+
+    with tarfile.open(path, "w") as archive:
+        for name, data in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return path
+
+
+def test_payload_in_legacy_tar_storages_member_is_found(tmp_path, marker):
+    """The `storages` member starts with a pickle (then raw bytes); that pickle is scanned."""
+    payload = memo_assembled_system(marker) + b"\x00" * 64
+    path = _legacy_tar(
+        tmp_path / "legacy_tar.pt",
+        [("sys_info", pickle.dumps({})), ("pickle", pickle.dumps({"w": 1})), ("storages", payload)],
+    )
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "storages" in f.location for f in result.findings), result.findings
+
+
+def test_unexpected_member_in_legacy_tar_is_scanned(tmp_path):
+    path = _legacy_tar(tmp_path / "legacy_tar.pt", [("sys_info", pickle.dumps({})), ("extra.pkl", eval_global())])
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "extra.pkl" in f.location for f in result.findings), result.findings
+
+
+# --- (f) callables built at runtime and embedded pickles -------------------------------
+# operator.attrgetter("system") is not a code-execution primitive by itself; calling what it
+# returns on an object, and then calling *that*, is. Only the chain shows it.
+
+_ATTRGETTER_RESULT = b"coperator\nattrgetter\n(S'system'\ntR(ccollections\nOrderedDict\n)RtR"
+
+
+@pytest.mark.claim("C21")
+def test_calling_the_result_of_a_call_is_critical(tmp_path, marker):
+    data = _ATTRGETTER_RESULT + f"(S'touch {marker}'\ntR.".encode()
+    result = scan_pickle_file(_write(tmp_path / "chain.pkl", data))
+    critical = [f for f in result.findings if f.code == "unresolved_callable"]
+    assert critical and critical[0].severity == "CRITICAL", result.findings
+    assert "operator.attrgetter" in critical[0].message
+
+
+@pytest.mark.claim("C21")
+def test_runtime_callable_stored_in_the_memo_is_still_tracked(tmp_path, marker):
+    data = _ATTRGETTER_RESULT + b"p0\n0g0\n" + f"(S'touch {marker}'\ntR.".encode()
+    result = scan_pickle_file(_write(tmp_path / "chain_memo.pkl", data))
+    assert any(f.code == "unresolved_callable" and f.severity == "CRITICAL" for f in result.findings), result.findings
+
+
+def test_newobj_on_a_runtime_built_class_is_critical(tmp_path):
+    data = b"\x80\x02" + _ATTRGETTER_RESULT + b")\x81."
+    result = scan_pickle_file(_write(tmp_path / "newobj.pkl", data))
+    assert any(f.code == "unresolved_callable" for f in result.findings), result.findings
+
+
+@pytest.mark.claim("C21")
+def test_payload_inside_an_embedded_storage_pickle_is_found(tmp_path):
+    """torch.storage._load_from_bytes(b) runs torch.load on b, so b is scanned too."""
+    inner = eval_global()
+    data = b"\x80\x03ctorch.storage\n_load_from_bytes\nB" + struct.pack("<I", len(inner)) + inner + b"\x85R."
+    result = scan_pickle_file(_write(tmp_path / "embedded.pkl", data))
+    assert any(f.code == "dangerous_import" and "embedded" in f.location for f in result.findings), result.findings
+
+
+def test_embedding_cannot_recurse_forever(tmp_path):
+    data = eval_global()
+    for _ in range(6):
+        data = b"\x80\x03ctorch.storage\n_load_from_bytes\nB" + struct.pack("<I", len(data)) + data + b"\x85R."
+    result = scan_pickle_file(_write(tmp_path / "deep.pkl", data))
+    assert any(f.code == "unresolved_import" and "nested" in f.message for f in result.findings), result.findings
+
+
+@pytest.mark.skipif(not __import__("aegis").TORCH_AVAILABLE, reason="PyTorch not installed")
+def test_plainly_pickled_tensors_are_clean(tmp_path):
+    """pickle.dumps(tensor) embeds each storage as a whole torch.save file; that is not a finding."""
+    import torch
+
+    path = _write(tmp_path / "plain.pkl", pickle.dumps({"w": torch.ones(3, 3), "b": torch.zeros(2)}))
+    assert scan_pickle_file(path).findings == []
+
+
+# --- (g) every pickle in legacy tar `storages` and `tensors` members ---------------------
+# Layout as torch.serialization.legacy_load reads it: a count pickle, then per storage a
+# (key, location, StorageType) pickle, an int64 element count and the raw data; per tensor a
+# (key, storage_id, type) pickle and a binary header (ndim, padding, sizes, strides, offset).
+
+
+def _storage_descriptor(key: str) -> bytes:
+    return (
+        b"\x80\x02X" + struct.pack("<I", len(key)) + key.encode() + b"X\x03\x00\x00\x00cpuctorch\nFloatStorage\n\x87."
+    )
+
+
+def _storages_member(raw_blocks, descriptor_payload: bytes | None = None) -> bytes:
+    out = pickle.dumps(len(raw_blocks), protocol=2)
+    for index, raw in enumerate(raw_blocks):
+        descriptor = _storage_descriptor(f"k{index}")
+        if descriptor_payload is not None and index == len(raw_blocks) - 1:
+            descriptor = descriptor_payload
+        out += descriptor + struct.pack("<q", len(raw) // 4) + raw
+    return out + pickle.dumps([], protocol=2)  # storage views
+
+
+def _tensors_member(count: int, last_args: bytes | None = None) -> bytes:
+    out = pickle.dumps(count, protocol=2)
+    for index in range(count):
+        args = pickle.dumps((f"t{index}", f"k{index}", 0), protocol=2)
+        if last_args is not None and index == count - 1:
+            args = last_args
+        out += args + struct.pack("<i", 2) + b"\x00" * 4 + struct.pack("<2q", 4, 4) + struct.pack("<2q", 4, 1)
+        out += struct.pack("<q", 0)
+    return out
+
+
+_OPCODE_LOOKALIKE = b"cos\nsystem\n(S'x'\ntR." * 8  # raw tensor bytes that resemble a pickle
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_a_later_storage_descriptor_is_found(tmp_path, marker):
+    raw = np.ones(64, dtype=np.float32).tobytes()
+    storages = _storages_member([raw, raw], descriptor_payload=memo_assembled_system(marker))
+    path = _legacy_tar(tmp_path / "legacy.tar", [("sys_info", pickle.dumps({})), ("storages", storages)])
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "storages" in f.location for f in result.findings), result.findings
+
+
+@pytest.mark.claim("C02")
+def test_payload_in_a_later_tensor_record_is_found(tmp_path):
+    path = _legacy_tar(
+        tmp_path / "legacy.tar", [("sys_info", pickle.dumps({})), ("tensors", _tensors_member(3, eval_global()))]
+    )
+    result = scan_pickle_file(path)
+    assert any(f.code == "dangerous_import" and "tensors" in f.location for f in result.findings), result.findings
+
+
+def test_raw_storage_bytes_that_look_like_opcodes_are_not_reported(tmp_path):
+    raw = _OPCODE_LOOKALIKE + b"\x00" * (-len(_OPCODE_LOOKALIKE) % 4)
+    members = [
+        ("sys_info", pickle.dumps({})),
+        ("pickle", pickle.dumps({"w": 0})),
+        ("storages", _storages_member([raw, np.ones(16, dtype=np.float32).tobytes()])),
+        ("tensors", _tensors_member(2)),
+    ]
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", members))
+    assert result.findings == []
+
+
+@pytest.mark.parametrize("header", [struct.pack("<i", 1000), struct.pack("<i", 2)])  # impossible ndim; truncated
+def test_tensors_member_with_a_bad_header_is_reported_and_still_scanned(tmp_path, header):
+    broken = pickle.dumps(2, protocol=2) + pickle.dumps(("t0", "k0", 0), protocol=2) + header + eval_global()
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", [("tensors", broken)]))
+    codes = {f.code for f in result.findings}
+    assert "malformed_pickle" in codes and "dangerous_import" in codes, result.findings
+
+
+def test_storages_member_that_cannot_be_walked_is_reported_and_still_scanned(tmp_path):
+    broken = pickle.dumps(1, protocol=2) + _storage_descriptor("k0") + struct.pack("<q", 1 << 40) + eval_global()
+    result = scan_pickle_file(_legacy_tar(tmp_path / "legacy.tar", [("storages", broken)]))
+    codes = {f.code for f in result.findings}
+    assert "malformed_pickle" in codes and "dangerous_import" in codes, result.findings

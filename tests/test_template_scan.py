@@ -8,16 +8,17 @@ reached through filters, or taken from model-supplied variables such as eos_toke
 import pytest
 
 from aegis.templatescan import check_template
-
 from tests.test_model_formats import _scan_json, gguf_bytes
 
 CHATML = (
-    "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
+    "{% for message in messages %}"
+    "{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
     "{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
 )
 LLAMA3 = (
     "{% set loop_messages = messages %}{% for message in loop_messages %}"
-    "{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n'+ message['content'] | trim + '<|eot_id|>' %}"
+    "{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n'"
+    "+ message['content'] | trim + '<|eot_id|>' %}"
     "{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}"
     "{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{% endif %}"
 )
@@ -76,7 +77,7 @@ def test_templates_that_load_other_templates_cannot_be_verified():
 def test_template_analysis_never_renders(tmp_path):
     marker = tmp_path / "rendered"
     # Would create the marker if rendered in an unsandboxed environment; parsing alone must not.
-    template = ("{{ cycler.__init__.__globals__.os.popen('touch " + str(marker) + "').read() }}")
+    template = "{{ cycler.__init__.__globals__.os.popen('touch " + str(marker) + "').read() }}"
     assert check_template(template)
     assert not marker.exists()
 
@@ -84,8 +85,12 @@ def test_template_analysis_never_renders(tmp_path):
 @pytest.mark.claim("C04")
 def test_obfuscated_gguf_template_is_critical(tmp_path):
     path = tmp_path / "evil.gguf"
-    path.write_bytes(gguf_bytes([("tokenizer.chat_template", BYPASSES["concatenated_name"].replace(
-        "{{ cycler.__init__ if false }}", ""))], []))
+    path.write_bytes(
+        gguf_bytes(
+            [("tokenizer.chat_template", BYPASSES["concatenated_name"].replace("{{ cycler.__init__ if false }}", ""))],
+            [],
+        )
+    )
     code, entry = _scan_json(path)
     assert code == 1
     assert entry["findings"][0]["rule"] == "AEGIS-G001" and entry["findings"][0]["severity"] == "critical"
@@ -96,3 +101,26 @@ def test_unparseable_gguf_template_is_a_medium_finding(tmp_path):
     path.write_bytes(gguf_bytes([("tokenizer.chat_template", "{% for %}")], []))
     code, entry = _scan_json(path)
     assert code == 1 and entry["findings"][0]["rule"] == "AEGIS-G003"
+
+
+def test_names_bound_by_with_blocks_are_traced():
+    computed = "{% with a = '__cla' ~ 'ss__' %}{{ ''|attr(a) }}{% endwith %}"
+    plain = "{% with a = 'role' %}{{ messages[0]|attr(a) }}{% endwith %}"
+    assert [kind for kind, _ in check_template(computed)] == ["injection"]
+    assert check_template(plain) == []
+
+
+def test_names_bound_by_call_block_defaults_are_traced():
+    macro = "{% macro m(n) %}{{ caller() }}{% endmacro %}"
+    computed = macro + "{% call(a='__cla' ~ 'ss__') m(1) %}{{ ''|attr(a) }}{% endcall %}"
+    plain = macro + "{% call(a='role') m(1) %}{{ messages[0]|attr(a) }}{% endcall %}"
+    assert [kind for kind, _ in check_template(computed)] == ["injection"]
+    assert check_template(plain) == []
+
+
+def test_without_jinja2_a_text_match_is_used_and_marked_unverifiable(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jinja2", None)
+    issues = check_template("{{ ''.__class__.__mro__[1].__subclasses__() }}")
+    assert ("unverifiable", "jinja2 is not installed, so only a text match was possible") in issues

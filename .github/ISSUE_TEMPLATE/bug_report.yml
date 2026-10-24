@@ -1,0 +1,47 @@
+name: Bug report
+description: Aegis crashed, gave a wrong exit code, or a documented command does not work.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bypass (a malicious file that Aegis passes) or a sandbox escape is a security report:
+        use private vulnerability reporting instead (see SECURITY.md). Never attach a real
+        malicious file; a reproduction must be benign (at most it creates a marker file).
+  - type: input
+    id: version
+    attributes:
+      label: Aegis version
+      description: Output of `aegis --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Environment
+      description: Output of `aegis doctor` (OS, Python, Rust core, PyTorch).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      description: The exact command, and how to get or generate the input file.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Full output, including the exit code (`echo $?`).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true

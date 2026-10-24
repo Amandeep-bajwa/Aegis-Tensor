@@ -57,6 +57,7 @@ def _invoke(*args):
 
 # --- Taxonomy integrity ----------------------------------------------------------
 
+
 def test_every_atlas_reference_exists_in_the_pinned_release():
     for rule_id, entry in RULES.items():
         for technique in entry["atlas"]:
@@ -77,18 +78,45 @@ def test_owasp_references_are_known_identifiers():
 def test_every_scanner_code_maps_to_exactly_one_rule():
     scanner_codes = {
         # Rust tensor rules (TensorScanResult.rules)
-        "pooled_entropy", "exponent_lane", "out_of_range", "low_plane", "benford", "unreadable",
+        "pooled_entropy",
+        "exponent_lane",
+        "out_of_range",
+        "low_plane",
+        "benford",
+        "unreadable",
         # Header channels (FormatFinding.channel)
-        "metadata", "header_whitespace", "tensor_name", "secret",
+        "metadata",
+        "header_whitespace",
+        "tensor_name",
+        "secret",
         # Container scanner (PickleFinding.code)
-        "dangerous_import", "unknown_import", "unresolved_import", "extension_registry", "malformed_pickle",
-        "zip_tampered", "no_payload", "container_unreadable", "archive_7z", "malformed_npy", "npy_object",
+        "dangerous_import",
+        "unknown_import",
+        "unresolved_import",
+        "unresolved_callable",
+        "extension_registry",
+        "malformed_pickle",
+        "zip_tampered",
+        "no_payload",
+        "container_unreadable",
+        "archive_7z",
+        "malformed_npy",
+        "npy_object",
         "unknown_format",
         # GGUF, Keras and ONNX scanners (aegis/modelformats.py)
-        "gguf_template", "gguf_template_unverifiable", "gguf_malformed", "keras_lambda", "keras_custom_object",
-        "onnx_external_path", "onnx_external_data", "onnx_custom_op", "format_unavailable",
+        "gguf_template",
+        "gguf_template_unverifiable",
+        "gguf_malformed",
+        "keras_lambda",
+        "keras_custom_object",
+        "onnx_external_path",
+        "onnx_external_data",
+        "onnx_custom_op",
+        "format_unavailable",
         # Optional engines (aegis/engines.py)
-        "engine_finding", "engine_disagreement", "engine_error",
+        "engine_finding",
+        "engine_disagreement",
+        "engine_error",
         # Fuzzer
         "activation_spike",
     }
@@ -105,6 +133,7 @@ def test_container_scanner_only_emits_known_codes():
 
 
 # --- JSON findings document ---------------------------------------------------------
+
 
 @pytest.mark.claim("C15")
 @needs_core
@@ -129,8 +158,10 @@ def test_json_output_validates_against_schema(model_files):
 
 @needs_core
 def test_finding_ids_are_stable_across_runs(model_files):
-    ids = lambda: sorted(f["id"] for e in json.loads(_invoke(*model_files, "-f", "json").stdout)["files"]
-                         for f in e["findings"])
+    def ids():
+        document = json.loads(_invoke(*model_files, "-f", "json").stdout)
+        return sorted(f["id"] for e in document["files"] for f in e["findings"])
+
     assert ids() == ids()
 
 
@@ -143,6 +174,7 @@ def test_treatment_commands_are_attached(model_files):
 
 
 # --- SARIF --------------------------------------------------------------------------
+
 
 @pytest.mark.claim("C15")
 @needs_core
@@ -180,6 +212,7 @@ def test_sarif_reports_unscannable_files_as_tool_notifications(tmp_path, monkeyp
 
 # --- Multi-file exit codes ---------------------------------------------------------
 
+
 @needs_core
 def test_multiple_files_take_the_worst_result(model_files):
     assert _invoke("clean.safetensors").exit_code == 0
@@ -196,6 +229,7 @@ def test_text_format_is_unchanged_by_default(model_files):
 
 # --- Fuzz findings use the same finding object ----------------------------------------
 
+
 @pytest.mark.claim("C15")
 def test_fuzz_findings_validate_against_the_finding_definition(tmp_path):
     torch = pytest.importorskip("torch")
@@ -207,8 +241,21 @@ def test_fuzz_findings_validate_against_the_finding_definition(tmp_path):
     path = tmp_path / "backdoor.safetensors"
     save_torch(ThresholdBackdoor().state_dict(), str(path))
     out = tmp_path / "fuzz.json"
-    result = runner.invoke(app, ["fuzz", str(path), "--arch", "tests.fuzz_fixtures:ThresholdBackdoor",
-                                 "--input-shape", "2,10", "-n", "12", "-o", str(out)])
+    result = runner.invoke(
+        app,
+        [
+            "fuzz",
+            str(path),
+            "--arch",
+            "tests.fuzz_fixtures:ThresholdBackdoor",
+            "--input-shape",
+            "2,10",
+            "-n",
+            "12",
+            "-o",
+            str(out),
+        ],
+    )
     assert result.exit_code == 0, result.output
     findings = json.loads(out.read_text())["findings"]
     assert findings and findings[0]["rule"] == "AEGIS-B001"

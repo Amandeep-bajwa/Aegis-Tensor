@@ -14,10 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import torch
-import torch.nn as nn
 from safetensors.numpy import save_file
-from safetensors.torch import load_file
 from typer.testing import CliRunner
 
 from aegis import CORE_AVAILABLE, TORCH_AVAILABLE, scan_safetensors
@@ -25,6 +22,11 @@ from aegis.cli import app
 from aegis.disarm import disarm_file
 from aegis.formatscan import scan_safetensors_header
 from aegis.picklescan import scan_pickle_file
+
+if TORCH_AVAILABLE:
+    import torch
+    import torch.nn as nn
+    from safetensors.torch import load_file
 
 needs_core = pytest.mark.skipif(not CORE_AVAILABLE, reason="aegis_core Rust extension not compiled")
 needs_torch = pytest.mark.skipif(not TORCH_AVAILABLE, reason="PyTorch not installed")
@@ -44,11 +46,11 @@ def _rewrite_header(path: Path, mutate) -> None:
     """Apply `mutate` to the parsed JSON header and rewrite the file, keeping the data bytes."""
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    header = json.loads(raw[8:8 + n])
+    header = json.loads(raw[8 : 8 + n])
     header = mutate(header)
     blob = json.dumps(header, separators=(",", ":")).encode()
     blob += b" " * ((-len(blob)) % 8)
-    path.write_bytes(struct.pack("<Q", len(blob)) + blob + raw[8 + n:])
+    path.write_bytes(struct.pack("<Q", len(blob)) + blob + raw[8 + n :])
 
 
 def _tensors(path: Path) -> dict:
@@ -56,6 +58,7 @@ def _tensors(path: Path) -> dict:
 
 
 # --- Tensor-level threats -----------------------------------------------------
+
 
 @pytest.mark.claim("C06")
 @needs_core
@@ -75,6 +78,7 @@ def test_t01_structured_lsb_payload_is_pinpointed_and_disarmed(tmp_path):
     assert not _tensors(cleaned)["layer.weight"].is_suspicious
 
 
+@needs_torch
 @pytest.mark.claim("C09", "L01")
 @needs_core
 def test_t02_random_lsb_payload_is_a_documented_blind_spot_and_disarm_removes_it(tmp_path):
@@ -117,13 +121,24 @@ def test_t04_partial_overwrite_of_one_percent_is_flagged(tmp_path):
 
 @needs_core
 def test_t08_clean_model_has_no_findings_in_any_channel(tmp_path):
-    path = _write(tmp_path / "clean.safetensors", {f"l{i}.weight": _weights(i) for i in range(4)},
-                  metadata={"format": "pt"})
+    path = _write(
+        tmp_path / "clean.safetensors", {f"l{i}.weight": _weights(i) for i in range(4)}, metadata={"format": "pt"}
+    )
     assert all(not r.is_suspicious for r in scan_safetensors(str(path)))
     assert not scan_safetensors_header(path).is_suspicious
 
 
 # --- Container and header channels --------------------------------------------
+
+
+def test_t05_payload_split_across_small_metadata_values_is_flagged(tmp_path):
+    """No single value is over the per-value limit, but together they are over the total limit."""
+    path = _write(tmp_path / "m.safetensors", {"w": _weights(5)}, metadata={f"k{i}": "A" * 1000 for i in range(5)})
+    header = scan_safetensors_header(path)
+    assert [f.channel for f in header.findings] == ["metadata"]
+    assert header.findings[0].where == "__metadata__"
+    assert "totals 5000 bytes" in header.findings[0].message
+
 
 @pytest.mark.claim("C07")
 def test_t05_payload_in_metadata_is_flagged_and_stripped(tmp_path):
@@ -144,9 +159,9 @@ def test_t06_whitespace_channel_in_header_is_flagged(tmp_path):
     _rewrite_header(path, lambda h: h)  # re-serialise to the canonical form
     raw = path.read_bytes()
     (n,) = struct.unpack("<Q", raw[:8])
-    header = raw[8:8 + n].rstrip(b" ")
+    header = raw[8 : 8 + n].rstrip(b" ")
     padded = header + b" " * 5000
-    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n:])
+    path.write_bytes(struct.pack("<Q", len(padded)) + padded + raw[8 + n :])
     result = scan_safetensors_header(path)
     assert result.is_suspicious
     assert result.findings[0].channel == "header_whitespace"
@@ -165,11 +180,12 @@ def test_t07_oversized_tensor_name_is_flagged_for_quarantine(tmp_path):
 def test_t09_truncated_file_is_rejected_not_silently_scanned(tmp_path):
     path = _write(tmp_path / "m.safetensors", {"w": _weights(9)})
     path.write_bytes(path.read_bytes()[:-1000])
-    with pytest.raises(Exception):
+    with pytest.raises(OSError, match="incomplete metadata"):
         scan_safetensors(str(path))
 
 
 # --- Pickle-container threats --------------------------------------------------
+
 
 class _Exec:
     """Pickles as os.system(...). The payload only writes a marker file."""
@@ -230,19 +246,22 @@ def test_t14_torchscript_is_refused_with_explanation(tmp_path):
 
 # --- Behavioural threats (sleeper / trigger backdoors) -------------------------
 
-class _ThresholdBackdoor(nn.Module):
-    """Dormant trigger: a large input on feature 0 amplifies the hidden layer by 50x."""
 
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(10, 20)
-        self.fc2 = nn.Linear(20, 2)
+if TORCH_AVAILABLE:
 
-    def forward(self, x):
-        h = self.fc1(x)
-        if (x[:, 0] > 8.0).any():
-            h = h * 50.0
-        return self.fc2(h)
+    class _ThresholdBackdoor(nn.Module):
+        """Dormant trigger: a large input on feature 0 amplifies the hidden layer by 50x."""
+
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(10, 20)
+            self.fc2 = nn.Linear(20, 2)
+
+        def forward(self, x):
+            h = self.fc1(x)
+            if (x[:, 0] > 8.0).any():
+                h = h * 50.0
+            return self.fc2(h)
 
 
 @needs_torch
@@ -283,7 +302,7 @@ def test_t17_nan_and_inf_injection_is_flagged(tmp_path):
     w = _weights(17, 1 << 16)
     idx = np.random.default_rng(17).choice(w.size, w.size // 200, replace=False)
     w[idx[: len(idx) // 2]] = np.nan
-    w[idx[len(idx) // 2:]] = np.inf
+    w[idx[len(idx) // 2 :]] = np.inf
     path = _write(tmp_path / "m.safetensors", {"layer.weight": w})
     result = _tensors(path)["layer.weight"]
     assert result.is_suspicious
@@ -303,7 +322,7 @@ def test_t18_scan_output_names_the_metadata_payload_and_its_treatment(tmp_path):
 @pytest.mark.xfail(
     strict=True,
     reason="Known gap: tensors under 256 elements are below the sample floor, so a payload "
-           "split into many tiny tensors is not flagged. Strict, so closing the gap will be noticed.",
+    "split into many tiny tensors is not flagged. Strict, so closing the gap will be noticed.",
 )
 @pytest.mark.claim("L02")
 def test_t19_payload_split_into_tiny_tensors_is_flagged(tmp_path):

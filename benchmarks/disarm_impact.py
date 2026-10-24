@@ -28,7 +28,7 @@ import torch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from aegis.disarm import MANTISSA_BITS, SAFE_MAX_LOW_BITS, disarm_state, max_relative_change  # noqa: E402
+from aegis.disarm import SAFE_MAX_LOW_BITS, disarm_state, max_relative_change  # noqa: E402
 from benchmarks.fingerprint import disarm_fingerprint  # noqa: E402
 
 CACHE = ROOT / "benchmarks" / ".hf-cache"
@@ -79,9 +79,14 @@ def sweep(model, dtype: torch.dtype, evaluate) -> list[dict]:
     so every row measures the weights as stored in ``dtype``.
     """
     compute = {k: v.dtype for k, v in model.state_dict().items()}
-    original = {k: (v.detach().to(dtype) if v.is_floating_point() else v.detach()).clone()
-                for k, v in model.state_dict().items()}
-    upcast = lambda state: {k: v.to(compute[k]) for k, v in state.items()}
+    original = {
+        k: (v.detach().to(dtype) if v.is_floating_point() else v.detach()).clone()
+        for k, v in model.state_dict().items()
+    }
+
+    def upcast(state):
+        return {k: v.to(compute[k]) for k, v in state.items()}
+
     rows, baseline = [], None
     try:
         model.load_state_dict(upcast(original))
@@ -93,21 +98,29 @@ def sweep(model, dtype: torch.dtype, evaluate) -> list[dict]:
             metrics = evaluate(baseline)
             if baseline is None:
                 baseline = metrics
-            rows.append({
-                "low_bits": bits,
-                "safe": bits <= SAFE_MAX_LOW_BITS[dtype],
-                "bound": 0.0 if bits == 0 else max_relative_change(dtype, bits),
-                **{k: v for k, v in metrics.items() if not k.startswith("_")},
-                "seconds": round(time.time() - started, 1),
-            })
-            print(f"    low_bits={bits:>2}: " + ", ".join(f"{k}={v}" for k, v in rows[-1].items()
-                                                         if k not in ("low_bits", "safe", "bound", "seconds")), flush=True)
+            rows.append(
+                {
+                    "low_bits": bits,
+                    "safe": bits <= SAFE_MAX_LOW_BITS[dtype],
+                    "bound": 0.0 if bits == 0 else max_relative_change(dtype, bits),
+                    **{k: v for k, v in metrics.items() if not k.startswith("_")},
+                    "seconds": round(time.time() - started, 1),
+                }
+            )
+            print(
+                f"    low_bits={bits:>2}: "
+                + ", ".join(
+                    f"{k}={v}" for k, v in rows[-1].items() if k not in ("low_bits", "safe", "bound", "seconds")
+                ),
+                flush=True,
+            )
     finally:
         model.load_state_dict(upcast(original))
     return rows
 
 
 # --- Tasks ------------------------------------------------------------------------
+
 
 def vit_task(images: int) -> dict:
     from PIL import Image
@@ -119,24 +132,40 @@ def vit_task(images: int) -> dict:
     # One image per class first (ids 0, 3, 6, ...), then the rest, so small runs cover many classes.
     rows = sorted(rows, key=lambda r: (r["id"] % 3, r["id"]))[:images]
     processor = AutoImageProcessor.from_pretrained(VIT, revision=sha, cache_dir=str(CACHE))
-    model = ViTForImageClassification.from_pretrained(VIT, revision=sha, cache_dir=str(CACHE), use_safetensors=True).eval()
-    pixels = [processor(images=Image.open(io.BytesIO(r["image"]["bytes"])).convert("RGB"),
-                        return_tensors="pt")["pixel_values"] for r in rows]
+    model = ViTForImageClassification.from_pretrained(
+        VIT, revision=sha, cache_dir=str(CACHE), use_safetensors=True
+    ).eval()
+    pixels = [
+        processor(images=Image.open(io.BytesIO(r["image"]["bytes"])).convert("RGB"), return_tensors="pt")[
+            "pixel_values"
+        ]
+        for r in rows
+    ]
     labels = torch.tensor([r["label"] for r in rows])
 
     def evaluate(baseline):
         preds = []
         with torch.inference_mode():
             for start in range(0, len(pixels), 32):
-                preds.append(model(pixel_values=torch.cat(pixels[start:start + 32])).logits.argmax(-1))
+                preds.append(model(pixel_values=torch.cat(pixels[start : start + 32])).logits.argmax(-1))
         preds = torch.cat(preds)
         out = {"top1": round((preds == labels).float().mean().item() * 100, 2), "_preds": preds}
-        out["agreement"] = 100.0 if baseline is None else round((preds == baseline["_preds"]).float().mean().item() * 100, 2)
+        out["agreement"] = (
+            100.0 if baseline is None else round((preds == baseline["_preds"]).float().mean().item() * 100, 2)
+        )
         return out
 
-    return {"task": "ViT-base · ImageNet-1k val subset", "model": VIT, "revision": sha, "data": IMAGENET,
-            "data_revision": data_sha, "n": len(rows), "dtype": "float32", "metric": "top-1 accuracy (%)",
-            "rows": sweep(model, torch.float32, evaluate)}
+    return {
+        "task": "ViT-base · ImageNet-1k val subset",
+        "model": VIT,
+        "revision": sha,
+        "data": IMAGENET,
+        "data_revision": data_sha,
+        "n": len(rows),
+        "dtype": "float32",
+        "metric": "top-1 accuracy (%)",
+        "rows": sweep(model, torch.float32, evaluate),
+    }
 
 
 def bert_task() -> dict:
@@ -147,46 +176,70 @@ def bert_task() -> dict:
     sentences, labels = table.column("sentence").to_pylist(), torch.tensor(table.column("label").to_pylist())
     tokenizer = AutoTokenizer.from_pretrained(BERT, revision=sha, cache_dir=str(CACHE))
     model = AutoModelForSequenceClassification.from_pretrained(
-        BERT, revision=sha, cache_dir=str(CACHE), use_safetensors=True).eval()
-    batches = [tokenizer(sentences[i:i + 64], padding=True, truncation=True, max_length=128, return_tensors="pt")
-               for i in range(0, len(sentences), 64)]
+        BERT, revision=sha, cache_dir=str(CACHE), use_safetensors=True
+    ).eval()
+    batches = [
+        tokenizer(sentences[i : i + 64], padding=True, truncation=True, max_length=128, return_tensors="pt")
+        for i in range(0, len(sentences), 64)
+    ]
 
     def evaluate(baseline):
         with torch.inference_mode():
             preds = torch.cat([model(**b).logits.argmax(-1) for b in batches])
         out = {"accuracy": round((preds == labels).float().mean().item() * 100, 2), "_preds": preds}
-        out["agreement"] = 100.0 if baseline is None else round((preds == baseline["_preds"]).float().mean().item() * 100, 2)
+        out["agreement"] = (
+            100.0 if baseline is None else round((preds == baseline["_preds"]).float().mean().item() * 100, 2)
+        )
         return out
 
-    return {"task": "BERT-base · SST-2 validation", "model": BERT, "revision": sha, "data": SST2,
-            "data_revision": data_sha, "n": len(sentences), "dtype": "float32", "metric": "accuracy (%)",
-            "rows": sweep(model, torch.float32, evaluate)}
+    return {
+        "task": "BERT-base · SST-2 validation",
+        "model": BERT,
+        "revision": sha,
+        "data": SST2,
+        "data_revision": data_sha,
+        "n": len(sentences),
+        "dtype": "float32",
+        "metric": "accuracy (%)",
+        "rows": sweep(model, torch.float32, evaluate),
+    }
 
 
 def perplexity_task(repo: str, dtype: torch.dtype, windows: int, label: str) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     sha, data_sha = pinned(repo), pinned(WIKITEXT, "dataset")
-    text = "\n\n".join(parquet(WIKITEXT, "wikitext-2-raw-v1/test-00000-of-00001.parquet", data_sha)
-                       .column("text").to_pylist())
+    text = "\n\n".join(
+        parquet(WIKITEXT, "wikitext-2-raw-v1/test-00000-of-00001.parquet", data_sha).column("text").to_pylist()
+    )
     tokenizer = AutoTokenizer.from_pretrained(repo, revision=sha, cache_dir=str(CACHE))
     model = AutoModelForCausalLM.from_pretrained(
-        repo, revision=sha, cache_dir=str(CACHE), use_safetensors=True, dtype=torch.float32).eval()
+        repo, revision=sha, cache_dir=str(CACHE), use_safetensors=True, dtype=torch.float32
+    ).eval()
     ids = tokenizer(text, return_tensors="pt")["input_ids"][0]
     length = 512
-    chunks = [ids[i * length:(i + 1) * length].unsqueeze(0) for i in range(windows)]
+    chunks = [ids[i * length : (i + 1) * length].unsqueeze(0) for i in range(windows)]
 
     def evaluate(baseline):
         with torch.inference_mode():
             losses = [model(input_ids=c, labels=c).loss.float().item() for c in chunks]
         return {"perplexity": round(math.exp(sum(losses) / len(losses)), 3)}
 
-    return {"task": label, "model": repo, "revision": sha, "data": f"{WIKITEXT} (wikitext-2-raw-v1 test)",
-            "data_revision": data_sha, "n": windows * length, "dtype": str(dtype).replace("torch.", ""),
-            "metric": "perplexity (lower is better)", "rows": sweep(model, dtype, evaluate)}
+    return {
+        "task": label,
+        "model": repo,
+        "revision": sha,
+        "data": f"{WIKITEXT} (wikitext-2-raw-v1 test)",
+        "data_revision": data_sha,
+        "n": windows * length,
+        "dtype": str(dtype).replace("torch.", ""),
+        "metric": "perplexity (lower is better)",
+        "rows": sweep(model, dtype, evaluate),
+    }
 
 
 # --- Report -----------------------------------------------------------------------
+
 
 def render(results: list[dict]) -> str:
     lines = [
@@ -217,10 +270,16 @@ def render(results: list[dict]) -> str:
         for row in rows:
             delta = row[metric_keys[0]] - base[metric_keys[0]]
             safe = "baseline" if row["low_bits"] == 0 else ("**safe**" if row["safe"] else "unsafe")
-            bound = "—" if row["low_bits"] == 0 else (
-                f"{row['bound']:.2%}" if row["bound"] >= 1e-4 else f"{row['bound']:.1e}")
-            lines.append(f"| {row['low_bits']} | {safe} | {bound} | " + " | ".join(str(row[k]) for k in metric_keys)
-                         + f" | {delta:+.3f} |")
+            bound = (
+                "—"
+                if row["low_bits"] == 0
+                else (f"{row['bound']:.2%}" if row["bound"] >= 1e-4 else f"{row['bound']:.1e}")
+            )
+            lines.append(
+                f"| {row['low_bits']} | {safe} | {bound} | "
+                + " | ".join(str(row[k]) for k in metric_keys)
+                + f" | {delta:+.3f} |"
+            )
         lines.append("")
     return "\n".join(lines)
 
