@@ -20,6 +20,7 @@ import zipfile
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich import box
@@ -536,7 +537,8 @@ def scan_command(
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=EXIT_ERROR) from None
 
-    files, errored = [], False
+    files: list[dict[str, Any]] = []
+    errored = False
     for index, path in enumerate(model_paths):
         if text and index:
             console.rule()
@@ -781,7 +783,7 @@ def fuzz_command(
             config = None
             if hf_config:
                 model, config = build_from_hf_config(hf_config, revision=hf_revision)
-            else:
+            elif arch:
                 model = build_from_import_path(arch, parse_kwargs(arch_kwargs))
             if file_format == "safetensors":
                 keys = load_safetensors_weights(model, model_path, strict=strict_weights)
@@ -1224,7 +1226,7 @@ def doctor_command():
 
     # PyTorch
     if TORCH_AVAILABLE:
-        import torch  # type: ignore
+        import torch
 
         table.add_row("PyTorch Engine", "[green]OK[/green]", f"v{torch.__version__}")
     else:

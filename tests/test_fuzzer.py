@@ -313,3 +313,12 @@ def test_classify_module_region():
     assert classify_module_region("embed", modules["embed"]) == "embedding"
     assert classify_module_region("classifier", modules["classifier"]) == "head"
     assert classify_module_region("block.mlp.1", modules["block.mlp.1"], is_last=True) == "head"
+
+
+@needs_torch
+def test_fuzz_model_without_input_shape_or_vocab_size_is_refused():
+    """Neither a float input shape nor a token vocabulary: a clear error, not torch.zeros(None)."""
+    from aegis.modelload import fuzz_model
+
+    with pytest.raises(ValueError, match=r"input_shape .* or vocab_size"):
+        fuzz_model(SimpleLinearModel(), spike_threshold=3.0, iterations=1, seed=0)

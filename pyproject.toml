@@ -85,3 +85,31 @@ extend-immutable-calls = ["typer.Argument", "typer.Option"]
 # Tests assert by design (S101), and run the aegis CLI as a subprocess with fixed argument
 # lists built from tmp_path (S603).
 "tests/**" = ["S101", "S603"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# The compiled core and optional dependencies, which may be absent (the lint job installs none of
+# them). Everything else must resolve. transformers is optional too: only `aegis fuzz --hf-config`.
+[[tool.mypy.overrides]]
+module = [
+    "aegis.aegis_core",
+    "torch",
+    "torch.*",
+    "transformers",
+    "transformers.*",
+    "onnx",
+    "onnx.*",
+    "h5py",
+    "py7zr",
+    "py7zr.*",
+    "fickling",
+    "fickling.*",
+    "modelscan",
+    "modelscan.*",
+]
+ignore_missing_imports = true

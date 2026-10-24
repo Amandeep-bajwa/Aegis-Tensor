@@ -8,7 +8,7 @@ __version__ = "0.1.0"
 
 # Import compiled Rust core extension if available
 try:
-    from aegis.aegis_core import (  # type: ignore
+    from aegis.aegis_core import (
         TensorScanResult,
         benford_law_mad,
         benford_law_stats,
@@ -23,14 +23,14 @@ try:
 except ImportError:
     # Graceful fallback when aegis_core hasn't been compiled yet with maturin
     CORE_AVAILABLE = False
-    TensorScanResult = None  # type: ignore
-    scan_safetensors = None  # type: ignore
-    scan_tensor_bytes = None  # type: ignore
-    shannon_entropy_chunked = None  # type: ignore
-    shannon_entropy_bytes = None  # type: ignore
-    mantissa_bit_plane_entropy = None  # type: ignore
-    benford_law_mad = None  # type: ignore
-    benford_law_stats = None  # type: ignore
+    TensorScanResult = None
+    scan_safetensors = None
+    scan_tensor_bytes = None
+    shannon_entropy_chunked = None
+    shannon_entropy_bytes = None
+    mantissa_bit_plane_entropy = None
+    benford_law_mad = None
+    benford_law_stats = None
 
 # Dynamic Fuzzer imports
 from aegis.fuzzer import (

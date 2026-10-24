@@ -24,7 +24,8 @@ def mask(secret: str) -> str:
 
 def find_secrets(text: str) -> list[tuple[str, str]]:
     """[(kind, masked value)] for each credential-like string in ``text``."""
-    found, seen = [], set()
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for kind, pattern in PATTERNS:
         for match in pattern.finditer(text):
             if match.group(0) not in seen and not any(match.group(0) in s for s in seen):

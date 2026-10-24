@@ -101,6 +101,8 @@ def fuzz_model(
             num_iterations=iterations,
             progress_callback=progress_callback,
         )
+    if input_shape is None:
+        raise ValueError("fuzz_model needs input_shape (float inputs) or vocab_size (token inputs)")
     baseline = torch.zeros(input_shape, dtype=dtype, device=device)
     return fuzzer.run_fuzzing(
         baseline_input=baseline,

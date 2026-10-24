@@ -540,9 +540,10 @@ class DynamicTrojanFuzzer:
             )
             if baseline_input is None:
                 gen = torch.Generator().manual_seed(seed) if seed is not None else None
+                # build_auto_fuzz_suite has already refused a call with neither vocab_size nor input_shape.
                 if vocab_size is not None:
                     baseline_input = torch.randint(0, vocab_size, (1, seq_len or 32), generator=gen)
-                else:
+                elif input_shape is not None:
                     baseline_input = torch.randn(tuple(input_shape), generator=gen)
         elif baseline_input is None:
             raise ValueError("baseline_input is required when a custom sample_inputs_generator is given")
@@ -583,11 +584,11 @@ class DynamicTrojanFuzzer:
             iteration_reports: list[FuzzIterationReport] = []
 
             for i in range(num_iterations):
-                if auto_suite is not None:
+                if sample_inputs_generator is not None:
+                    input_tag, test_input = f"fuzz_step_{i + 1}", sample_inputs_generator(i)
+                elif auto_suite is not None:
                     input_tag, test_input = auto_suite[i % len(auto_suite)]
                     test_input = _cast(test_input)
-                else:
-                    input_tag, test_input = f"fuzz_step_{i + 1}", sample_inputs_generator(i)
                 hook_mgr.clear()
                 with torch.no_grad():
                     _ = self.model(test_input)

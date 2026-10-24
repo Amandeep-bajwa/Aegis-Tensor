@@ -27,6 +27,7 @@ import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import IO, cast
 
 # Modules whose import alone means arbitrary code execution or system access.
 DANGEROUS_MODULES = frozenset(
@@ -244,9 +245,9 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
             _pop_to_mark(stack)
         stack.append(_UNKNOWN)
     elif name == "STACK_GLOBAL":
-        attr, module = _pop(stack), _pop(stack)
-        if isinstance(module, str) and isinstance(attr, str):
-            _record(module, attr, result, where)
+        attr_operand, module_operand = _pop(stack), _pop(stack)
+        if isinstance(module_operand, str) and isinstance(attr_operand, str):
+            _record(module_operand, attr_operand, result, where)
         else:
             result.add(
                 "SUSPICIOUS",
@@ -295,7 +296,8 @@ def _scan_pickle_stream(
     """
     if best_effort:
         report_malformed = False
-    stream = data if isinstance(data, mmap.mmap) else io.BytesIO(data)
+    # A memory map has the file methods genops uses (read, readline, tell), so it is read in place.
+    stream: IO[bytes] = cast(IO[bytes], data) if isinstance(data, mmap.mmap) else io.BytesIO(data)
     pos, complete, resyncs = 0, 0, 0
     while pos < len(data):
         if max_pickles is not None and complete >= max_pickles:
@@ -306,7 +308,9 @@ def _scan_pickle_stream(
         last_offset = pos - 1
         try:
             finished = False
-            for op, arg, offset in pickletools.genops(stream):
+            for op, arg, position in pickletools.genops(stream):
+                # genops reports None only for streams without tell(); both stream types have it.
+                offset = last_offset + 1 if position is None else position
                 last_offset = offset
                 _step(op, arg, offset, stack, memo, result, location)
                 if op.name == "STOP":

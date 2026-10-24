@@ -544,14 +544,13 @@ def from_engines(path: str, results, aegis_findings: list[Finding]) -> list[Find
     return findings
 
 
-def _split_location(location: str):
+def _split_location(location: str) -> tuple[str | None, int | None]:
     """'archive.pt:archive/data.pkl@35' -> ('archive/data.pkl', 35)."""
     entry, offset = location, None
     if "@" in location:
         entry, _, tail = location.rpartition("@")
         offset = int(tail) if tail.isdigit() else None
-    entry = entry.split(":", 1)[1] if ":" in entry else None
-    return entry, offset
+    return (entry.split(":", 1)[1] if ":" in entry else None), offset
 
 
 def _round(value, digits: int = 4):
