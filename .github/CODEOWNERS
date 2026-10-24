@@ -1,0 +1,15 @@
+# Every change needs a review from a code owner (branch protection on main requires it).
+# The last matching pattern wins, so specific paths come after the catch-all.
+*                                   @KrishG7
+
+/src/                               @KrishG7
+/aegis/                             @KrishG7
+/tests/                             @KrishG7
+/.github/                           @KrishG7
+/pyproject.toml                     @KrishG7
+/Cargo.toml                         @KrishG7
+/docs/claims.json                   @KrishG7
+/benchmarks/calibration_lock.json   @KrishG7
+
+# The dynamic fuzzer: Daksh wrote it and reviews every change to it.
+/aegis/fuzzer.py                    @KrishG7 @7dxksh7

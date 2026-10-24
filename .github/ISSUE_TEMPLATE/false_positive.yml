@@ -1,0 +1,50 @@
+name: False positive
+description: Aegis flagged a model you believe is clean.
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks: false positives are how the thresholds get calibrated (docs/calibration.md).
+        If you think the model really is malicious, do not file it here; see SECURITY.md.
+  - type: input
+    id: repo
+    attributes:
+      label: Model repository
+      description: For example `org/model` on Hugging Face, or where the file came from.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or revision
+      description: The full commit hash, so the exact file can be fetched again.
+    validations:
+      required: true
+  - type: input
+    id: file
+    attributes:
+      label: File name
+      description: For example `model-00001-of-00002.safetensors`.
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule id
+      description: The `rule` field of the finding (`aegis scan --format json`).
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Output of `aegis scan --format json <file>` and `aegis --version`.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why you think it is clean
+      description: For example, a first-party upload with many downloads.
