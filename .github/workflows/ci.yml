@@ -110,10 +110,10 @@ jobs:
           pytest -v tests/
       - name: Run test suite with coverage
         if: matrix.python-version == '3.12'
-        # Coverage floor: 83.94% measured on this job (24 Oct 2026), rounded down. Ratchet up only, never lower.
+        # Coverage floor: 88.26% measured on this job (24 Oct 2026), rounded down. Ratchet up only, never lower.
         run: |
           source venv/bin/activate
-          pytest -v tests/ --cov=aegis --cov-report=xml --cov-report=term --cov-fail-under=83
+          pytest -v tests/ --cov=aegis --cov-report=xml --cov-report=term --cov-fail-under=88
       - name: Diff coverage (new and changed lines must be at least 90% covered)
         if: matrix.python-version == '3.12' && github.event_name == 'pull_request'
         run: |
