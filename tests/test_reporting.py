@@ -93,6 +93,7 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         "dangerous_import",
         "unknown_import",
         "unresolved_import",
+        "unresolved_callable",
         "extension_registry",
         "malformed_pickle",
         "zip_tampered",

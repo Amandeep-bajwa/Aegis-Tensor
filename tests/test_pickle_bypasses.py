@@ -345,3 +345,58 @@ def test_unexpected_member_in_legacy_tar_is_scanned(tmp_path):
     path = _legacy_tar(tmp_path / "legacy_tar.pt", [("sys_info", pickle.dumps({})), ("extra.pkl", eval_global())])
     result = scan_pickle_file(path)
     assert any(f.code == "dangerous_import" and "extra.pkl" in f.location for f in result.findings), result.findings
+
+
+# --- (f) callables built at runtime and embedded pickles -------------------------------
+# operator.attrgetter("system") is not a code-execution primitive by itself; calling what it
+# returns on an object, and then calling *that*, is. Only the chain shows it.
+
+_ATTRGETTER_RESULT = b"coperator\nattrgetter\n(S'system'\ntR(ccollections\nOrderedDict\n)RtR"
+
+
+@pytest.mark.claim("C21")
+def test_calling_the_result_of_a_call_is_critical(tmp_path, marker):
+    data = _ATTRGETTER_RESULT + f"(S'touch {marker}'\ntR.".encode()
+    result = scan_pickle_file(_write(tmp_path / "chain.pkl", data))
+    critical = [f for f in result.findings if f.code == "unresolved_callable"]
+    assert critical and critical[0].severity == "CRITICAL", result.findings
+    assert "operator.attrgetter" in critical[0].message
+
+
+@pytest.mark.claim("C21")
+def test_runtime_callable_stored_in_the_memo_is_still_tracked(tmp_path, marker):
+    data = _ATTRGETTER_RESULT + b"p0\n0g0\n" + f"(S'touch {marker}'\ntR.".encode()
+    result = scan_pickle_file(_write(tmp_path / "chain_memo.pkl", data))
+    assert any(f.code == "unresolved_callable" and f.severity == "CRITICAL" for f in result.findings), result.findings
+
+
+def test_newobj_on_a_runtime_built_class_is_critical(tmp_path):
+    data = b"\x80\x02" + _ATTRGETTER_RESULT + b")\x81."
+    result = scan_pickle_file(_write(tmp_path / "newobj.pkl", data))
+    assert any(f.code == "unresolved_callable" for f in result.findings), result.findings
+
+
+@pytest.mark.claim("C21")
+def test_payload_inside_an_embedded_storage_pickle_is_found(tmp_path):
+    """torch.storage._load_from_bytes(b) runs torch.load on b, so b is scanned too."""
+    inner = eval_global()
+    data = b"\x80\x03ctorch.storage\n_load_from_bytes\nB" + struct.pack("<I", len(inner)) + inner + b"\x85R."
+    result = scan_pickle_file(_write(tmp_path / "embedded.pkl", data))
+    assert any(f.code == "dangerous_import" and "embedded" in f.location for f in result.findings), result.findings
+
+
+def test_embedding_cannot_recurse_forever(tmp_path):
+    data = eval_global()
+    for _ in range(6):
+        data = b"\x80\x03ctorch.storage\n_load_from_bytes\nB" + struct.pack("<I", len(data)) + data + b"\x85R."
+    result = scan_pickle_file(_write(tmp_path / "deep.pkl", data))
+    assert any(f.code == "unresolved_import" and "nested" in f.message for f in result.findings), result.findings
+
+
+@pytest.mark.skipif(not __import__("aegis").TORCH_AVAILABLE, reason="PyTorch not installed")
+def test_plainly_pickled_tensors_are_clean(tmp_path):
+    """pickle.dumps(tensor) embeds each storage as a whole torch.save file; that is not a finding."""
+    import torch
+
+    path = _write(tmp_path / "plain.pkl", pickle.dumps({"w": torch.ones(3, 3), "b": torch.zeros(2)}))
+    assert scan_pickle_file(path).findings == []

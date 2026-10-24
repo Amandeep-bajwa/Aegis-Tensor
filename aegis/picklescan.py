@@ -198,7 +198,7 @@ class PickleFinding:
     severity: str  # CRITICAL | SUSPICIOUS
     message: str
     location: str = ""
-    # Stable machine code: dangerous_import, unknown_import, unresolved_import,
+    # Stable machine code: dangerous_import, unknown_import, unresolved_import, unresolved_callable,
     # extension_registry, malformed_pickle, zip_tampered, no_payload, container_unreadable,
     # archive_7z, malformed_npy, npy_object, unknown_format. See aegis/findings.py.
     code: str = "unknown_format"
@@ -299,24 +299,89 @@ def _record(module: str, name: str, result: PickleScanResult, location: str) -> 
 
 _MARK = object()
 _UNKNOWN = object()
+BYTES_OPS = frozenset({"BINBYTES", "SHORT_BINBYTES", "BINBYTES8", "BYTEARRAY8"})
+# Globals whose call loads their bytes argument as another checkpoint, so the bytes are scanned too.
+EMBEDDED_LOADERS = frozenset({"torch.storage._load_from_bytes"})
+EMBEDDED_TAG = "[embedded]"
+
+
+@dataclass(frozen=True)
+class _Global:
+    """A global the pickle imported."""
+
+    module: str
+    name: str
+
+    def __str__(self) -> str:
+        return f"{self.module}.{self.name}"
+
+
+@dataclass(frozen=True)
+class _Call:
+    """The value a call returns; only its callable is kept, to name the chain."""
+
+    func: object
+
+    def __str__(self) -> str:
+        return f"{self.func if isinstance(self.func, (_Global, _Call)) else 'an unresolved callable'}(...)"
+
+    @property
+    def root(self) -> object:
+        return self.func.root if isinstance(self.func, _Call) else self.func
 
 
 def _pop(stack: list) -> object:
     return stack.pop() if stack else _UNKNOWN
 
 
-def _pop_to_mark(stack: list) -> None:
+def _pop_to_mark(stack: list) -> list:
+    """Pop down to the topmost MARK and return the items above it, bottom first."""
+    items: list = []
     while stack:
-        if stack.pop() is _MARK:
+        item = stack.pop()
+        if item is _MARK:
+            break
+        items.append(item)
+    return items[::-1]
+
+
+def _check_call(func: object, args: object, result: PickleScanResult, where: str) -> None:
+    """A call the pickle would make when loaded: REDUCE, NEWOBJ, NEWOBJ_EX or OBJ."""
+    if isinstance(func, _Call) and isinstance(func.root, _Global):
+        # Rooted at a real import, so not junk bytes read while resynchronising.
+        result.add(
+            "CRITICAL",
+            f"calls the result of {func}: a callable built at runtime, which cannot be checked statically",
+            where,
+            code="unresolved_callable",
+        )
+    elif isinstance(func, _Global) and str(func) in EMBEDDED_LOADERS:
+        payload = args[0] if isinstance(args, tuple) and args else None
+        if not isinstance(payload, (bytes, bytearray)):
             return
+        depth = where.count(EMBEDDED_TAG)
+        if depth >= MAX_NESTING:
+            result.add("SUSPICIOUS", "embedded pickles nested too deep; not scanned", where, code="unresolved_import")
+        else:
+            _scan_bytes(bytes(payload), result, f"{where}{EMBEDDED_TAG}", depth + 1)
 
 
 def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResult, location: str) -> None:
-    """Apply one opcode to the symbolic stack. Only strings and imports are tracked."""
+    """Apply one opcode to the symbolic stack. Strings, bytes, tuples, imports and the
+    results of calls are tracked; everything else is an unknown value."""
     name = op.name
     where = f"{location}@{offset}"
     if name in STRING_OPS:
         stack.append(arg if isinstance(arg, str) else _UNKNOWN)
+    elif name in BYTES_OPS:
+        stack.append(arg if isinstance(arg, (bytes, bytearray)) else _UNKNOWN)
+    elif name == "EMPTY_TUPLE":
+        stack.append(())
+    elif name in ("TUPLE1", "TUPLE2", "TUPLE3"):
+        items = [_pop(stack) for _ in range(int(name[-1]))]
+        stack.append(tuple(reversed(items)))
+    elif name == "TUPLE":
+        stack.append(tuple(_pop_to_mark(stack)))
     elif name == "MARK":
         stack.append(_MARK)
     elif name == "MEMOIZE":
@@ -330,13 +395,32 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
     elif name in ("GLOBAL", "INST"):
         module, _, attr = str(arg).partition(" ")
         _record(module, attr, result, where)
+        imported = _Global(module, attr)
         if name == "INST":
-            _pop_to_mark(stack)
-        stack.append(_UNKNOWN)
+            _check_call(imported, tuple(_pop_to_mark(stack)), result, where)
+            stack.append(_Call(imported))
+        else:
+            stack.append(imported)
+    elif name in ("REDUCE", "NEWOBJ"):
+        args, func = _pop(stack), _pop(stack)
+        _check_call(func, args, result, where)
+        stack.append(_Call(func))
+    elif name == "NEWOBJ_EX":
+        _kwargs, args, func = _pop(stack), _pop(stack), _pop(stack)
+        _check_call(func, args, result, where)
+        stack.append(_Call(func))
+    elif name == "OBJ":
+        items = _pop_to_mark(stack)
+        func = items[0] if items else _UNKNOWN
+        _check_call(func, tuple(items[1:]), result, where)
+        stack.append(_Call(func))
+    elif name == "BUILD":
+        _pop(stack)  # the state; the object being built stays on the stack
     elif name == "STACK_GLOBAL":
         attr_operand, module_operand = _pop(stack), _pop(stack)
         if isinstance(module_operand, str) and isinstance(attr_operand, str):
             _record(module_operand, attr_operand, result, where)
+            stack.append(_Global(module_operand, attr_operand))
         else:
             result.add(
                 "SUSPICIOUS",
@@ -344,7 +428,7 @@ def _step(op, arg, offset: int, stack: list, memo: dict, result: PickleScanResul
                 where,
                 code="unresolved_import",
             )
-        stack.append(_UNKNOWN)
+            stack.append(_UNKNOWN)
     elif name.startswith("EXT"):
         result.add(
             "SUSPICIOUS",

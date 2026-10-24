@@ -20,6 +20,10 @@ backfilled (issue A3).
   a nested `torch.load`, or a `numpy.testing` helper that runs code used to get no finding; these
   are now critical. Only the globals that `torch.save` and numpy files use are allowed, and any
   other `torch`/`numpy` global is reported as unrecognised.
+- The pickle scanner tracks calls and their results. Calling a callable that another call built at
+  runtime (for example `operator.attrgetter("system")(obj)(...)`), even through the memo, is
+  critical (rule AEGIS-P013). Pickles embedded in PyTorch storages (`torch.storage._load_from_bytes`)
+  are scanned too, up to a nesting limit.
 
 ### Fixed
 - `aegis fuzz` refuses an unsupported file before asking for PyTorch.

@@ -71,6 +71,7 @@ probed and confirmed.
 | T12 | Malformed pickle, payload before or after the broken region | nullifAI broken-pickle evasion | Scan resyncs past malformed bytes and reports every global | Entry and byte offset | `refuse` | tested |
 | T13 | Loading an unsafe pickle through `aegis fuzz` | Loader-side RCE | `weights_only=True` by default; payload never runs | — | `refuse` | tested |
 | T20 | Callable assembled from memoized strings (MEMOIZE/PUT then GET then STACK_GLOBAL) | Scanner evasion | Static stack and memo simulation | Byte offset | `refuse` | tested |
+| T35 | Callable built at runtime and then called (the result of one REDUCE called by another), or a payload inside a pickle embedded in a torch storage (`torch.storage._load_from_bytes`) | Scanner evasion: no dangerous name is ever imported | Calls and their results are tracked symbolically, through the memo; embedded storage bytes are scanned as files, up to a nesting limit | Call chain and byte offset | `refuse` | tested |
 | T21 | Pickle renamed to another extension | Scanner evasion | Routing by magic bytes, not extension | File | `refuse` | tested |
 | T22 | Checkpoint repackaged as 7z | nullifAI | 7z flagged; contents scanned with py7zr | Archive entry and offset | `refuse` | tested |
 | T23 | Zip entry with encryption flag set, bad CRC, or damaged central directory | Breaks Python zip readers while PyTorch still loads | Entries read from local headers; tampering reported | Archive entry | `refuse` | tested |
@@ -130,7 +131,7 @@ Limits:
    - Payloads inside **packed quantized tensors** (GPTQ/AWQ int32, bitsandbytes 4-bit uint8, FP8) are only covered by the pooled-entropy rule, with little margin. A format-aware unpacking rule is needed (proposal P3).
    - Models over 3 GB were not calibrated.
 2. **Sub-256-element tensors** (T19) are not covered. A split-payload attacker can use this.
-3. **Pickle imports built at runtime** (for example a callable produced by another REDUCE and then called) cannot be resolved statically. They surface as unresolved STACK_GLOBAL or as the importing global, not as the final callable. Legacy tar `storages`/`tensors` members are scanned only up to their first pickle.
+3. **Legacy tar `storages`/`tensors` members** are scanned only up to their first pickle. (Callables built at runtime are now tracked: T35.)
 4. **Trojan treatment.** Detection exists for T15, but there's no fine-prune or retrain step.
 5. **Random low-bit payloads** (T02) are not detectable statically. Only the removal treatment works.
 

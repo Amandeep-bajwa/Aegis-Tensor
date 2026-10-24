@@ -236,6 +236,15 @@ RULES: dict[str, dict[str, Any]] = {
         "treatment": "inspect",
         **_CONTAINER,
     },
+    "AEGIS-P013": {
+        "code": "unresolved_callable",
+        "name": "pickle-runtime-callable",
+        "severity": "critical",
+        "confidence": 0.8,
+        "title": "Pickle calls a callable built at runtime",
+        "treatment": "refuse",
+        **_CONTAINER,
+    },
     "AEGIS-G001": {
         "code": "gguf_template",
         "name": "chat-template-injection",
