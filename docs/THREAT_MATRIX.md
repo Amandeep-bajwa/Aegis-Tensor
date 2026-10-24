@@ -125,6 +125,8 @@ Limits:
 
 ## Known gaps, in priority order
 
+Every known bypass and limit, with its evidence, is listed in [KNOWN_BYPASSES.md](KNOWN_BYPASSES.md).
+
 1. **Calibration findings** (docs/calibration.md: 54 public models, 18,113 tensors).
    - At default thresholds, 4 of 54 models (7.4%) raise false positives.
    - Three of them are float16 bias vectors tripping the exponent-lane rule; proposal P1 is a float16 threshold of 7.2.
