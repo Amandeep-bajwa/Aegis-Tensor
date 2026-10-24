@@ -326,7 +326,11 @@ fn plane_one_fraction(data: &[u8], width: usize, plane: u32) -> f64 {
         ones += ((word >> plane) & 1) as usize;
         count += 1;
     }
-    if count == 0 { 0.0 } else { ones as f64 / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        ones as f64 / count as f64
+    }
 }
 
 /// True when most sampled elements hold distinct values. Constant or heavily
@@ -359,7 +363,13 @@ struct Thresholds {
 
 /// Apply every tensor rule to one tensor's raw little-endian bytes. Used for safetensors
 /// files and, through `scan_tensor_bytes`, for tensors read from other formats.
-fn analyze_tensor(name: &str, dtype: Dtype, shape: Vec<usize>, data_bytes: &[u8], t: Thresholds) -> TensorScanResult {
+fn analyze_tensor(
+    name: &str,
+    dtype: Dtype,
+    shape: Vec<usize>,
+    data_bytes: &[u8],
+    t: Thresholds,
+) -> TensorScanResult {
     let num_elements: usize = shape.iter().product();
 
     let entropy = shannon_entropy_bytes(data_bytes);
@@ -387,7 +397,9 @@ fn analyze_tensor(name: &str, dtype: Dtype, shape: Vec<usize>, data_bytes: &[u8]
                 .count();
             bad as f64 / values.len() as f64
         });
-    let benford_stats = float_values.as_ref().map(|values| calculate_benford_stats(values));
+    let benford_stats = float_values
+        .as_ref()
+        .map(|values| calculate_benford_stats(values));
     let benford_mad = benford_stats.map(|s| s.mad).unwrap_or(0.0);
 
     let lane_entropies: Vec<f64> = if is_float {
@@ -528,9 +540,9 @@ pub fn scan_safetensors(
         .map_err(|e| PyIOError::new_err(format!("Failed to open model file '{}': {}", path, e)))?;
 
     let mmap = unsafe {
-        MmapOptions::new()
-            .map(&file)
-            .map_err(|e| PyIOError::new_err(format!("Failed to memory map file '{}': {}", path, e)))?
+        MmapOptions::new().map(&file).map_err(|e| {
+            PyIOError::new_err(format!("Failed to memory map file '{}': {}", path, e))
+        })?
     };
 
     let tensors = SafeTensors::deserialize(&mmap)
@@ -573,7 +585,13 @@ pub fn scan_safetensors(
                     };
                 }
             };
-            analyze_tensor(name, tensor_view.dtype(), tensor_view.shape().to_vec(), tensor_view.data(), thresholds)
+            analyze_tensor(
+                name,
+                tensor_view.dtype(),
+                tensor_view.shape().to_vec(),
+                tensor_view.data(),
+                thresholds,
+            )
         })
         .collect();
 
@@ -624,13 +642,18 @@ pub fn scan_tensor_bytes(
     exponent_entropy_threshold: f64,
     plane_floor: f64,
 ) -> PyResult<TensorScanResult> {
-    let (parsed, width) = parse_dtype(dtype)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype)))?;
+    let (parsed, width) = parse_dtype(dtype).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype))
+    })?;
     let expected = shape.iter().product::<usize>() * width;
     if expected != data.len() {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "tensor '{}': shape {:?} of {} needs {} bytes, got {}",
-            name, shape, dtype, expected, data.len()
+            name,
+            shape,
+            dtype,
+            expected,
+            data.len()
         )));
     }
     let thresholds = Thresholds {
@@ -826,11 +849,19 @@ mod tests {
     fn test_exponent_lane_separates_weights_from_random_bytes() {
         let weights = weight_like_f32(20_000, 7);
         let weight_lane = corrected_entropy(&byte_lane(&weights, 4, 3));
-        assert!(weight_lane < 5.0, "weight sign/exponent lane was {}", weight_lane);
+        assert!(
+            weight_lane < 5.0,
+            "weight sign/exponent lane was {}",
+            weight_lane
+        );
 
         let blob = pseudo_random_bytes(80_000, 9);
         let blob_lane = corrected_entropy(&byte_lane(&blob, 4, 3));
-        assert!(blob_lane > 7.5, "random sign/exponent lane was {}", blob_lane);
+        assert!(
+            blob_lane > 7.5,
+            "random sign/exponent lane was {}",
+            blob_lane
+        );
     }
 
     #[test]
@@ -848,12 +879,19 @@ mod tests {
             chunk.copy_from_slice(&((word & !1) | bit).to_le_bytes());
         }
         let structured_plane = plane_entropy(&text_bits, 4, 0);
-        assert!(structured_plane < 7.5, "structured low plane was {}", structured_plane);
+        assert!(
+            structured_plane < 7.5,
+            "structured low plane was {}",
+            structured_plane
+        );
     }
 
     #[test]
     fn test_constant_tensor_is_not_diverse() {
-        let ones: Vec<u8> = std::iter::repeat(1.0f32.to_le_bytes()).take(40_000).flatten().collect();
+        let ones: Vec<u8> = std::iter::repeat(1.0f32.to_le_bytes())
+            .take(40_000)
+            .flatten()
+            .collect();
         assert!(!has_diverse_values(&ones, 4));
         let weights = weight_like_f32(40_000, 5);
         assert!(has_diverse_values(&weights, 4));
@@ -874,6 +912,10 @@ mod tests {
 
         let mixed = weight_like_f32(50_000, 11);
         let fraction = plane_one_fraction(&mixed, 4, 0);
-        assert!(fraction > 0.4 && fraction < 0.6, "mixed plane fraction was {}", fraction);
+        assert!(
+            fraction > 0.4 && fraction < 0.6,
+            "mixed plane fraction was {}",
+            fraction
+        );
     }
 }
