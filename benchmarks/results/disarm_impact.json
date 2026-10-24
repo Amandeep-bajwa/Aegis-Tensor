@@ -15,7 +15,7 @@
     "bound": 0.0,
     "top1": 81.2,
     "agreement": 100.0,
-    "seconds": 62.5
+    "seconds": 58.8
    },
    {
     "low_bits": 4,
@@ -23,7 +23,7 @@
     "bound": 9.5367431640625e-07,
     "top1": 81.2,
     "agreement": 100.0,
-    "seconds": 58.7
+    "seconds": 59.2
    },
    {
     "low_bits": 8,
@@ -31,7 +31,7 @@
     "bound": 1.52587890625e-05,
     "top1": 81.2,
     "agreement": 100.0,
-    "seconds": 59.2
+    "seconds": 58.7
    },
    {
     "low_bits": 12,
@@ -39,7 +39,7 @@
     "bound": 0.000244140625,
     "top1": 81.2,
     "agreement": 100.0,
-    "seconds": 58.4
+    "seconds": 59.7
    },
    {
     "low_bits": 16,
@@ -47,7 +47,7 @@
     "bound": 0.00390625,
     "top1": 81.2,
     "agreement": 99.9,
-    "seconds": 58.2
+    "seconds": 59.5
    },
    {
     "low_bits": 18,
@@ -55,7 +55,7 @@
     "bound": 0.015625,
     "top1": 80.8,
     "agreement": 99.3,
-    "seconds": 58.5
+    "seconds": 66.8
    },
    {
     "low_bits": 20,
@@ -63,10 +63,10 @@
     "bound": 0.0625,
     "top1": 81.0,
     "agreement": 97.8,
-    "seconds": 58.2
+    "seconds": 62.5
    }
   ],
-  "fingerprint": "f3b59f35ff711a2a"
+  "fingerprint": "2b696ca0a9cb91e2"
  },
  {
   "task": "BERT-base \u00b7 SST-2 validation",
@@ -84,7 +84,7 @@
     "bound": 0.0,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 12.5
+    "seconds": 12.1
    },
    {
     "low_bits": 4,
@@ -92,7 +92,7 @@
     "bound": 9.5367431640625e-07,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 12.4
+    "seconds": 12.0
    },
    {
     "low_bits": 8,
@@ -100,7 +100,7 @@
     "bound": 1.52587890625e-05,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 14.5
+    "seconds": 12.1
    },
    {
     "low_bits": 12,
@@ -108,7 +108,7 @@
     "bound": 0.000244140625,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 12.5
+    "seconds": 12.0
    },
    {
     "low_bits": 16,
@@ -116,7 +116,7 @@
     "bound": 0.00390625,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 12.5
+    "seconds": 12.2
    },
    {
     "low_bits": 18,
@@ -124,7 +124,7 @@
     "bound": 0.015625,
     "accuracy": 92.55,
     "agreement": 100.0,
-    "seconds": 12.4
+    "seconds": 12.0
    },
    {
     "low_bits": 20,
@@ -132,10 +132,10 @@
     "bound": 0.0625,
     "accuracy": 92.89,
     "agreement": 99.66,
-    "seconds": 12.4
+    "seconds": 12.0
    }
   ],
-  "fingerprint": "f3b59f35ff711a2a"
+  "fingerprint": "2b696ca0a9cb91e2"
  },
  {
   "task": "GPT-2 \u00b7 WikiText-2 perplexity",
@@ -152,52 +152,52 @@
     "safe": true,
     "bound": 0.0,
     "perplexity": 41.97,
-    "seconds": 4.9
+    "seconds": 4.2
    },
    {
     "low_bits": 4,
     "safe": true,
     "bound": 9.5367431640625e-07,
     "perplexity": 41.97,
-    "seconds": 4.9
+    "seconds": 4.2
    },
    {
     "low_bits": 8,
     "safe": true,
     "bound": 1.52587890625e-05,
     "perplexity": 41.97,
-    "seconds": 4.9
+    "seconds": 4.3
    },
    {
     "low_bits": 12,
     "safe": true,
     "bound": 0.000244140625,
     "perplexity": 41.969,
-    "seconds": 5.3
+    "seconds": 4.3
    },
    {
     "low_bits": 16,
     "safe": true,
     "bound": 0.00390625,
     "perplexity": 41.84,
-    "seconds": 6.0
+    "seconds": 4.5
    },
    {
     "low_bits": 18,
     "safe": false,
     "bound": 0.015625,
     "perplexity": 44.236,
-    "seconds": 6.1
+    "seconds": 4.2
    },
    {
     "low_bits": 20,
     "safe": false,
     "bound": 0.0625,
     "perplexity": 43.173,
-    "seconds": 6.6
+    "seconds": 4.3
    }
   ],
-  "fingerprint": "f3b59f35ff711a2a"
+  "fingerprint": "2b696ca0a9cb91e2"
  },
  {
   "task": "GPT-2 (cast to float16) \u00b7 WikiText-2 perplexity",
@@ -214,38 +214,38 @@
     "safe": true,
     "bound": 0.0,
     "perplexity": 41.968,
-    "seconds": 4.3
+    "seconds": 4.4
    },
    {
     "low_bits": 2,
     "safe": true,
     "bound": 0.001953125,
     "perplexity": 42.026,
-    "seconds": 5.1
+    "seconds": 4.7
    },
    {
     "low_bits": 4,
     "safe": true,
     "bound": 0.0078125,
     "perplexity": 42.066,
-    "seconds": 4.7
+    "seconds": 4.8
    },
    {
     "low_bits": 6,
     "safe": false,
     "bound": 0.03125,
     "perplexity": 42.238,
-    "seconds": 4.6
+    "seconds": 4.3
    },
    {
     "low_bits": 8,
     "safe": false,
     "bound": 0.125,
     "perplexity": 42.978,
-    "seconds": 4.6
+    "seconds": 4.3
    }
   ],
-  "fingerprint": "f3b59f35ff711a2a"
+  "fingerprint": "2b696ca0a9cb91e2"
  },
  {
   "task": "Qwen2.5-0.5B \u00b7 WikiText-2 perplexity",
@@ -269,37 +269,37 @@
     "safe": true,
     "bound": 0.0078125,
     "perplexity": 20.279,
-    "seconds": 13.8
+    "seconds": 15.8
    },
    {
     "low_bits": 2,
     "safe": true,
     "bound": 0.015625,
     "perplexity": 20.406,
-    "seconds": 14.2
+    "seconds": 13.8
    },
    {
     "low_bits": 3,
     "safe": false,
     "bound": 0.03125,
     "perplexity": 20.521,
-    "seconds": 14.1
+    "seconds": 15.5
    },
    {
     "low_bits": 4,
     "safe": false,
     "bound": 0.0625,
     "perplexity": 21.392,
-    "seconds": 13.1
+    "seconds": 15.5
    },
    {
     "low_bits": 5,
     "safe": false,
     "bound": 0.125,
     "perplexity": 23.323,
-    "seconds": 13.2
+    "seconds": 12.9
    }
   ],
-  "fingerprint": "f3b59f35ff711a2a"
+  "fingerprint": "2b696ca0a9cb91e2"
  }
 ]

@@ -21,6 +21,8 @@ blocks cannot be treated this way and are reported). Torch tensors are accepted 
 
 import json
 import mmap
+import os
+import secrets
 import shutil
 import struct
 from dataclasses import dataclass, field
@@ -258,11 +260,22 @@ def disarm_file(
         raise ValueError("destination must differ from the source")
     with open(source, "rb") as handle:
         head = handle.read(4)
-    if head == b"GGUF":
-        if strip_metadata:
-            raise ValueError("--strip-metadata is not supported for GGUF: its metadata holds the tokenizer")
-        return _disarm_gguf(source, destination, _Treatment(low_bits, allow_unsafe, "gguf"))
-    return _disarm_safetensors(source, destination, strip_metadata, _Treatment(low_bits, allow_unsafe, "safetensors"))
+    if head == b"GGUF" and strip_metadata:
+        raise ValueError("--strip-metadata is not supported for GGUF: its metadata holds the tokenizer")
+    # The output is written under a temporary name and renamed only when every tensor was
+    # treated, so a failure never leaves a partly disarmed file under the "disarmed" name,
+    # and never replaces an earlier good output.
+    partial = destination.with_name(f".{destination.name}.{os.getpid()}.{secrets.token_hex(4)}.partial")
+    try:
+        if head == b"GGUF":
+            report = _disarm_gguf(source, partial, _Treatment(low_bits, allow_unsafe, "gguf"))
+        else:
+            treatment = _Treatment(low_bits, allow_unsafe, "safetensors")
+            report = _disarm_safetensors(source, partial, strip_metadata, treatment)
+        os.replace(partial, destination)
+    finally:
+        partial.unlink(missing_ok=True)
+    return report
 
 
 def _disarm_safetensors(source: Path, destination: Path, strip_metadata: bool, treatment: _Treatment) -> DisarmReport:

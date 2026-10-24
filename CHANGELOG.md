@@ -30,6 +30,10 @@ backfilled (issue A3).
 - Legacy tar checkpoints: every pickle in the `storages` and `tensors` members is scanned, not only
   the first. Members are read record by record as PyTorch reads them, so raw tensor bytes are never
   parsed as opcodes; a member that cannot be read that way is reported and still scanned.
+- `aegis disarm` writes its output under a temporary name and renames it only after every tensor
+  was treated. Before, a failure part-way through left a file under the "disarmed" name; for GGUF
+  it was a full copy in which some tensors were never disarmed, and a failure could also replace an
+  earlier good output.
 
 ### Fixed
 - `aegis fuzz` refuses an unsupported file before asking for PyTorch.

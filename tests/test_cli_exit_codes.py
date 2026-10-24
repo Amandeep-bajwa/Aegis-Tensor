@@ -213,6 +213,7 @@ def test_disarm_width_reaching_the_exponent_is_refused_even_with_allow_unsafe(cl
     result = runner.invoke(app, ["disarm", str(clean_model), str(out), "--low-bits", "23", "--allow-unsafe"])
     assert result.exit_code == 1
     assert "exponent" in result.output
+    assert not out.exists()
 
 
 def test_report_bundle_with_an_unknown_engine_is_an_error(clean_model, tmp_path):

@@ -313,3 +313,45 @@ def test_files_disarmed_at_the_default_width_keep_no_low_bit_payload(tmp_path):
         b = np.frombuffer(tail[4096 * 4 :], dtype=np.uint16)
         assert not np.any(a & np.uint32((1 << default_width("float32")) - 1)), name
         assert not np.any(b & np.uint16((1 << default_width("float16")) - 1)), name
+
+
+# --- A failed disarm leaves nothing behind -------------------------------------------
+# The output name says "disarmed", so a half-written or half-treated file must never be left there.
+
+
+def _clean_safetensors(path):
+    from safetensors.numpy import save_file as save_numpy
+
+    save_numpy({"w": np.random.default_rng(0).normal(0, 0.02, 4096).astype(np.float32)}, str(path))
+    return path
+
+
+def test_refused_safetensors_disarm_leaves_no_output(tmp_path):
+    src, out = _clean_safetensors(tmp_path / "m.safetensors"), tmp_path / "m.disarmed.safetensors"
+    with pytest.raises(ValueError, match="exponent"):
+        disarm_file(src, out, low_bits=23, allow_unsafe=True)
+    assert not out.exists()
+    assert list(tmp_path.iterdir()) == [src]
+
+
+def test_failed_gguf_disarm_leaves_no_partly_disarmed_copy(tmp_path):
+    from tests.test_model_formats import gguf_bytes
+
+    rng = np.random.default_rng(1)
+    first, second = (rng.normal(0, 0.02, 4096).astype(np.float32).tobytes() for _ in range(2))
+    full = gguf_bytes([("general.alignment", 32)], [("a.weight", [4096], 0, first), ("b.weight", [4096], 0, second)])
+    src, out = tmp_path / "m.gguf", tmp_path / "m.disarmed.gguf"
+    src.write_bytes(full[:-1024])  # the second tensor now points past the end of the file
+    with pytest.raises(ValueError, match="past the end"):
+        disarm_file(src, out)
+    assert not out.exists()
+    assert list(tmp_path.iterdir()) == [src]
+
+
+def test_failed_disarm_keeps_an_existing_output_unchanged(tmp_path):
+    src, out = _clean_safetensors(tmp_path / "m.safetensors"), tmp_path / "m.disarmed.safetensors"
+    disarm_file(src, out)
+    good = out.read_bytes()
+    with pytest.raises(ValueError):
+        disarm_file(src, out, low_bits=23, allow_unsafe=True)
+    assert out.read_bytes() == good
