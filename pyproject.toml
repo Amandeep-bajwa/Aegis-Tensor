@@ -49,6 +49,7 @@ dev = [
     "jsonschema[format]>=4.18",  # validates JSON and SARIF output in tests
     "onnx>=1.16",                # ONNX scanner tests (optional at runtime)
     "h5py>=3.10",                # legacy Keras HDF5 scanner tests (optional at runtime)
+    "pyyaml>=6.0",               # parses workflow YAML in release tests
 ]
 # Optional engines folded into the Aegis verdict (aegis/engines.py).
 engines = [

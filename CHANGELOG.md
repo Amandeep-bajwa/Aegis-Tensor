@@ -16,6 +16,8 @@ backfilled (issue A3).
 - Quality gates in CI: ruff, mypy, cargo fmt and clippy, a coverage floor, diff coverage on PRs,
   a wheel smoke test, a no-PyTorch test job, Conventional Commit PR titles and a check that code
   changes come with test changes.
+- Automated release workflow (.github/workflows/release.yml) building and smoke-testing abi3 wheels
+  for Linux x86_64, macOS arm64, macOS x86_64 and sdist on v* tags (#36).
 
 ### Security
 - The pickle scanner no longer trusts every `torch.*` and `numpy.*` global. A pickle calling
