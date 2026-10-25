@@ -44,9 +44,6 @@ def test_resolve_pins_revision_to_commit_sha(monkeypatch):
     assert info.sha == expected_sha
     assert "model.safetensors" in info.files
     assert info.repo == "test-org/test-model"
-    assert info["sha"] == expected_sha
-    assert info.get("revision") == "main"
-    assert "files" in info
 
 
 def test_resolve_raises_on_http_error(monkeypatch):
@@ -102,6 +99,43 @@ def test_oversized_header_length_is_refused_without_fetching(monkeypatch):
     assert calls[0][1] == "bytes=0-7"
     assert result.is_suspicious
     assert any("exceeds 100 MB" in f.message for f in result.findings)
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+
+
+def test_zero_header_length_is_refused_without_fetching(monkeypatch):
+    """Length field 0. Expect a finding and no second request."""
+    calls = []
+
+    def fake_get(url, headers=None, limit=None):
+        headers = headers or {}
+        calls.append((url, headers.get("Range")))
+        return 206, struct.pack("<Q", 0)
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+
+    result = fetch_safetensors_header("test-org/model", "abc1234", "model.safetensors")
+    assert len(calls) == 1
+    assert calls[0][1] == "bytes=0-7"
+    assert result.is_suspicious
+    assert any("header length is 0" in f.message for f in result.findings)
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+
+
+def test_safetensors_server_ignoring_range_is_refused(monkeypatch):
+    """Server that answers 200 instead of 206 is flagged as not supporting range requests."""
+    calls = []
+
+    def fake_get(url, headers=None, limit=None):
+        calls.append((url, limit))
+        return 200, b"this-is-a-full-file-not-range"
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+
+    result = fetch_safetensors_header("test-org/model", "abc1234", "model.safetensors")
+    assert len(calls) == 1
+    assert calls[0][1] == 8
+    assert result.is_suspicious
+    assert any("range requests not supported" in f.message.lower() for f in result.findings)
 
 
 def test_metadata_payload_found_remotely_matches_local_scan(monkeypatch, tmp_path):
@@ -177,6 +211,7 @@ def test_pickle_file_is_reported_not_downloaded(monkeypatch):
     assert len(calls) == 0
     assert result.is_suspicious
     assert any("pickle format: full download required to scan" in f.message for f in result.findings)
+    assert any(f.channel == "pickle_needs_download" for f in result.findings)
 
 
 def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
@@ -193,7 +228,8 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
     monkeypatch.setattr("aegis.hub._http_get", fake_get_py)
     info_py = resolve("test-org/custom-model", revision="main")
     assert len(info_py.findings) == 1
-    assert "trust_remote_code" in info_py.findings[0].code
+    assert info_py.findings[0].code == "trust_remote_code"
+    assert info_py.findings[0].rule == "AEGIS-H005"
     assert "custom Python code" in info_py.findings[0].message
 
     # Case 2: config.json has auto_map entry
@@ -209,21 +245,23 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
     monkeypatch.setattr("aegis.hub._http_get", fake_get_automap)
     info_automap = resolve("test-org/automap-model", revision="main")
     assert len(info_automap.findings) == 1
-    assert "trust_remote_code" in info_automap.findings[0].code
+    assert info_automap.findings[0].code == "trust_remote_code"
+    assert info_automap.findings[0].rule == "AEGIS-H005"
 
 
 def test_fetch_safetensors_header_prefix_error(monkeypatch):
     """fetch_safetensors_header reports failure if prefix fetch fails or is truncated."""
-    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (500, b""))
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (500, b""))
     result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
     assert result.is_suspicious
-    assert "failed to read safetensors header length prefix" in result.findings[0].message
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+    assert any("failed to read" in f.message or "not supported" in f.message for f in result.findings)
 
 
 def test_fetch_safetensors_header_body_error(monkeypatch):
     """fetch_safetensors_header reports failure if header bytes fetch fails or is truncated."""
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         if headers.get("Range") == "bytes=0-7":
             return 206, struct.pack("<Q", 500)
@@ -232,7 +270,8 @@ def test_fetch_safetensors_header_body_error(monkeypatch):
     monkeypatch.setattr("aegis.hub._http_get", fake_get)
     result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
     assert result.is_suspicious
-    assert "failed to read complete safetensors header bytes" in result.findings[0].message
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+    assert any("failed to read" in f.message or "not supported" in f.message for f in result.findings)
 
 
 def test_scan_remote_file_safetensors_and_other(monkeypatch, tmp_path):

@@ -119,6 +119,10 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         "engine_error",
         # Fuzzer
         "activation_spike",
+        # Hub remote scanner (aegis/hub.py)
+        "trust_remote_code",
+        "pickle_needs_download",
+        "header_unreadable",
     }
     assert scanner_codes == set(RULE_BY_CODE)
     assert len(RULE_BY_CODE) == len(RULES)

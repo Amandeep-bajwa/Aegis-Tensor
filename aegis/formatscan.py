@@ -86,6 +86,9 @@ def scan_safetensors_header_bytes(raw: bytes, header_len: int, label: str = "") 
                 )
             )
 
+    # The canonical header has no whitespace. Any extra bytes are unexplained padding.
+    # Re-serialise the parsed header as written, including an empty __metadata__ block.
+    # ensure_ascii=False matches the library, which writes UTF-8 without escaping.
     canonical = json.dumps(full, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     slack = header_len - len(canonical)
     if slack > MAX_HEADER_SLACK_BYTES:
