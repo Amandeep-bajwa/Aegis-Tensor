@@ -241,7 +241,14 @@ def scan_file(path: Path) -> dict:
     from aegis.formatscan import scan_safetensors_header
 
     t = DEFAULT_THRESHOLDS
-    results = scan_safetensors(str(path), t["entropy"], t["benford"], t["exponent"], t["plane"])
+    results = scan_safetensors(
+        str(path),
+        t["entropy"],
+        t["benford"],
+        t["exponent"],
+        t["plane"],
+        exponent_f16_entropy_threshold=t["exponent_f16"],
+    )
     header = scan_safetensors_header(path)
     return {
         "tensors": [_tensor_record(r) for r in results],
@@ -593,7 +600,7 @@ def render_report(results: list[dict], lock: dict) -> str:
         "## Metric distributions by dtype",
         "",
         "Clean-model distributions behind each rule. Defaults: pooled entropy > 7.92 (tensors ≥ 4 KiB),",
-        "exponent lane > 6.5, out-of-range fraction > 0.001, low plane < 7.5.",
+        "exponent lane > 6.5 (float16: > 7.2), out-of-range fraction > 0.001, low plane < 7.5.",
         "",
     ]
     for dtype in sorted(metrics):

@@ -89,6 +89,7 @@ def _tensor_stats(
             thresholds["benford"],
             thresholds["exponent"],
             thresholds["plane"],
+            exponent_f16_entropy_threshold=thresholds["exponent_f16"],
         )
     )
 
