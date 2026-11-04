@@ -38,6 +38,10 @@ def _http_get(
     """Single network access gateway for all Hub operations.
 
     Tests monkeypatch this function and make no live network calls.
+
+    When *limit* is given, at most ``limit + 1`` bytes are read from the
+    response body. Reading one byte over the limit lets callers detect when a
+    server has ignored the ``Range`` header and is sending the whole file.
     """
     req = urllib.request.Request(url, headers=headers or {})  # noqa: S310
     try:
@@ -98,18 +102,23 @@ def resolve(repo: str, revision: str = "main") -> HubRepoInfo:
     )
 
 
-def _call_http_get(
-    url: str,
-    headers: dict[str, str] | None = None,
-    limit: int | None = None,
-) -> tuple[int, bytes]:
-    try:
-        return _http_get(url, headers=headers, limit=limit)
-    except TypeError:
-        status, body = _http_get(url, headers=headers)
-        if limit is not None and len(body) > limit:
-            body = body[: limit + 1]
-        return status, body
+def _range_not_supported(filename: str, status: int) -> FormatScanResult:
+    """Return a finding for a server that did not respond with 206."""
+    result = FormatScanResult(path=filename)
+    if status == 0:
+        message = "network error while fetching safetensors header (no response from server)"
+    else:
+        message = f"HTTP range requests not supported by server (status {status})"
+    result.findings.append(
+        FormatFinding(
+            "SUSPICIOUS",
+            "header_unreadable",
+            "header",
+            message,
+            "quarantine",
+        )
+    )
+    return result
 
 
 def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanResult:
@@ -118,19 +127,9 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
     file_url = f"https://huggingface.co/{repo}/resolve/{sha}/{encoded_filename}"
 
     # Request 1: 8-byte length prefix
-    status, prefix = _call_http_get(file_url, headers={"Range": "bytes=0-7"}, limit=8)
+    status, prefix = _http_get(file_url, headers={"Range": "bytes=0-7"}, limit=8)
     if status != 206:
-        result = FormatScanResult(path=filename)
-        result.findings.append(
-            FormatFinding(
-                "SUSPICIOUS",
-                "header_unreadable",
-                "header",
-                f"HTTP range requests not supported by server (status {status})",
-                "quarantine",
-            )
-        )
-        return result
+        return _range_not_supported(filename, status)
 
     if len(prefix) != 8:
         result = FormatScanResult(path=filename)
@@ -147,7 +146,7 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
 
     (header_len,) = struct.unpack("<Q", prefix)
 
-    # Refuse oversized or zero-length headers without issuing a second request
+    # Refuse zero-length headers without issuing a second request
     if header_len == 0:
         result = FormatScanResult(path=filename, header_bytes=0)
         result.findings.append(
@@ -161,6 +160,8 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         )
         return result
 
+    # Refuse oversized headers without issuing a second request.
+    # The length field is attacker-controlled; the safetensors format caps it at 100 MB.
     if header_len > MAX_SAFETENSORS_HEADER_BYTES:
         result = FormatScanResult(path=filename, header_bytes=header_len)
         result.findings.append(
@@ -175,15 +176,21 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         return result
 
     # Request 2: header bytes
-    status, raw = _call_http_get(file_url, headers={"Range": f"bytes=8-{7 + header_len}"}, limit=header_len)
+    status, raw = _http_get(
+        file_url, headers={"Range": f"bytes=8-{7 + header_len}"}, limit=header_len
+    )
     if status != 206:
         result = FormatScanResult(path=filename, header_bytes=header_len)
+        if status == 0:
+            message = "network error while fetching safetensors header bytes (no response from server)"
+        else:
+            message = f"HTTP range requests not supported for header bytes (status {status})"
         result.findings.append(
             FormatFinding(
                 "SUSPICIOUS",
                 "header_unreadable",
                 "header",
-                f"HTTP range requests not supported for header bytes (status {status})",
+                message,
                 "quarantine",
             )
         )
@@ -202,7 +209,22 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         )
         return result
 
-    return scan_safetensors_header_bytes(raw, header_len, filename)
+    # scan_safetensors_header_bytes may raise json.JSONDecodeError if the
+    # header bytes are not valid JSON (for example, truncated or corrupted).
+    try:
+        return scan_safetensors_header_bytes(raw, header_len, filename)
+    except (json.JSONDecodeError, ValueError, struct.error):
+        result = FormatScanResult(path=filename, header_bytes=header_len)
+        result.findings.append(
+            FormatFinding(
+                "SUSPICIOUS",
+                "header_unreadable",
+                "header",
+                "safetensors header is not valid JSON (possibly truncated or corrupted)",
+                "quarantine",
+            )
+        )
+        return result
 
 
 def scan_remote_file(repo: str, sha: str, filename: str) -> FormatScanResult:

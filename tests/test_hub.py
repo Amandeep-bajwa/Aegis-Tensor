@@ -34,7 +34,7 @@ def test_resolve_pins_revision_to_commit_sha(monkeypatch):
         "siblings": [{"rfilename": "model.safetensors"}, {"rfilename": "config.json"}],
     }
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         assert "api/models/test-org/test-model/revision/main" in url
         return 200, json.dumps(api_payload).encode("utf-8")
 
@@ -48,7 +48,7 @@ def test_resolve_pins_revision_to_commit_sha(monkeypatch):
 
 def test_resolve_raises_on_http_error(monkeypatch):
     """resolve() raises ValueError when the Hugging Face API returns non-200."""
-    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (404, b"Not Found"))
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (404, b"Not Found"))
     with pytest.raises(ValueError, match="Hugging Face API returned status 404"):
         resolve("nonexistent/model")
 
@@ -62,7 +62,7 @@ def test_safetensors_header_is_fetched_with_two_range_requests(monkeypatch, tmp_
 
     calls = []
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         range_header = headers.get("Range")
         calls.append((url, range_header))
@@ -87,7 +87,7 @@ def test_oversized_header_length_is_refused_without_fetching(monkeypatch):
     calls = []
     oversized_length = 1 << 40
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         calls.append((url, headers.get("Range")))
         return 206, struct.pack("<Q", oversized_length)
@@ -149,7 +149,7 @@ def test_metadata_payload_found_remotely_matches_local_scan(monkeypatch, tmp_pat
     file_bytes = test_file.read_bytes()
     (header_len,) = struct.unpack("<Q", file_bytes[:8])
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         range_header = headers.get("Range")
         if range_header == "bytes=0-7":
@@ -176,7 +176,7 @@ def test_leaked_token_in_remote_metadata_is_masked(monkeypatch, tmp_path):
     file_bytes = test_file.read_bytes()
     (header_len,) = struct.unpack("<Q", file_bytes[:8])
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         range_header = headers.get("Range")
         if range_header == "bytes=0-7":
@@ -201,7 +201,7 @@ def test_pickle_file_is_reported_not_downloaded(monkeypatch):
     """Pickle files are reported as requiring full download with zero range requests."""
     calls = []
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         calls.append(url)
         return 200, b"should-not-be-called"
 
@@ -222,7 +222,7 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
         "siblings": [{"rfilename": "model.safetensors"}, {"rfilename": "modeling_custom.py"}],
     }
 
-    def fake_get_py(url, headers=None):
+    def fake_get_py(url, headers=None, limit=None):
         return 200, json.dumps(api_payload_py).encode("utf-8")
 
     monkeypatch.setattr("aegis.hub._http_get", fake_get_py)
@@ -239,7 +239,7 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
         "config": {"auto_map": {"AutoModel": "modeling_remote.RemoteModel"}},
     }
 
-    def fake_get_automap(url, headers=None):
+    def fake_get_automap(url, headers=None, limit=None):
         return 200, json.dumps(api_payload_automap).encode("utf-8")
 
     monkeypatch.setattr("aegis.hub._http_get", fake_get_automap)
@@ -247,6 +247,48 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
     assert len(info_automap.findings) == 1
     assert info_automap.findings[0].code == "trust_remote_code"
     assert info_automap.findings[0].rule == "AEGIS-H005"
+
+
+def test_network_error_status_zero_gets_own_message(monkeypatch):
+    """A network failure (status 0) must report a 'network error' message, not 'range not supported'."""
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (0, b"timed out"))
+    result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result.is_suspicious
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+    # Must say "network error", not "range requests not supported"
+    msgs = [f.message for f in result.findings]
+    assert any("network error" in m for m in msgs), f"Expected 'network error' in one of: {msgs}"
+    assert not any("range requests not supported" in m for m in msgs), (
+        "Status-0 must not say 'range requests not supported'"
+    )
+
+
+def test_invalid_json_header_gives_finding(monkeypatch, tmp_path):
+    """A header with valid length but invalid JSON must return a finding, not raise."""
+    # Build a safetensors file, then corrupt the header JSON bytes
+    from safetensors.numpy import save_file as _save
+    import numpy as np
+    test_file = tmp_path / "corrupted.safetensors"
+    _save({"w": np.zeros((4,), dtype=np.float32)}, test_file)
+    file_bytes = bytearray(test_file.read_bytes())
+    (header_len,) = struct.unpack("<Q", bytes(file_bytes[:8]))
+    # Overwrite header with non-JSON bytes
+    file_bytes[8 : 8 + header_len] = b"\xff" * header_len
+    corrupted = bytes(file_bytes)
+
+    def fake_get(url, headers=None, limit=None):
+        headers = headers or {}
+        rng = headers.get("Range", "")
+        if rng == "bytes=0-7":
+            return 206, corrupted[:8]
+        if rng.startswith(f"bytes=8-"):
+            return 206, corrupted[8 : 8 + header_len]
+        return 404, b""
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+    result = fetch_safetensors_header("test-org/model", "abc", "corrupted.safetensors")
+    assert result.is_suspicious
+    assert any(f.channel == "header_unreadable" for f in result.findings)
 
 
 def test_fetch_safetensors_header_prefix_error(monkeypatch):
@@ -281,7 +323,7 @@ def test_scan_remote_file_safetensors_and_other(monkeypatch, tmp_path):
     file_bytes = test_file.read_bytes()
     (header_len,) = struct.unpack("<Q", file_bytes[:8])
 
-    def fake_get(url, headers=None):
+    def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         range_header = headers.get("Range")
         if range_header == "bytes=0-7":
