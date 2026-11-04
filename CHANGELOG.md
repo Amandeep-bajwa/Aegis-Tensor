@@ -46,7 +46,10 @@ Every PR adds a line under Unreleased.
 - `aegis fuzz` refuses an unsupported file before asking for PyTorch.
 - `fuzz_model` raises a clear error when given neither an input shape nor a vocabulary size.
 
-## [0.1.0] - 2026-10-24
+## [0.1.0] - unreleased
+
+> **Note.** 0.1.0 was never tagged. This section records what was on `main` before the v0.2.0
+> sprint started (the first commit is 2026-09-08).
 
 ### Added
 - Static scanner for model checkpoint files supporting safetensors, GGUF, PyTorch pickle (.pt, .pth,
@@ -66,12 +69,16 @@ Every PR adds a line under Unreleased.
 - Real-world calibration harness on popular Hugging Face models measuring per-rule false-positive
   rates.
 - CLI exit-code contract: 0 clean, 1 findings above threshold, 2 unreadable file or usage error.
-- Integration with optional scanning engines (`picklescan`, `modelscan`) folded into the final
-  verdict.
+- Integration with optional scanning engines (Fickling and ModelScan, via `aegis/engines.py`)
+  folded into the final verdict.
+- Single-line verdict with a recommended next step printed after every scan (`aegis scan`).
+- Leaked-credential detection in model metadata (API keys, tokens, private keys).
+- `aegis report-bundle`: collect scan results and supporting evidence into a single archive.
+- `aegis doctor`: check the runtime environment and report which optional capabilities are available.
 
 ### Security
 - Static pickle opcode scanner simulating Python pickle stack and memo, detecting dangerous
   globals, and resyncing past malformed bytes without executing code.
 - Clamping of disarm low-bit widths to per-dtype safe maximums (float32 16 bits, float16 4 bits,
   bfloat16 2 bits) and strict refusal of exponent bits.
-- Automated sandbox enforcement on Linux for untrusted code execution during fuzzing.
+- Automated sandbox enforcement on Linux (`unshare -rn`) and macOS (`sandbox-exec`) for untrusted code execution during fuzzing.
