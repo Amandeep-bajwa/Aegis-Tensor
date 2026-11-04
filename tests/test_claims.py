@@ -129,6 +129,32 @@ def test_check_reports_duplicate_ids(tmp_path, monkeypatch):
     assert any("duplicate claim IDs" in p for p in problems), problems
 
 
+def test_sweep_accepts_torch_dtype():
+    """sweep() must accept a real torch dtype, not a string.
+
+    Regression guard: vit_task and bert_task previously passed "float32" (a
+    string), which made tensor.to(dtype) raise RuntimeError. This test calls
+    sweep with torch.float32 and a minimal model so the benchmark keeps working.
+    """
+    import sys
+
+    torch = pytest.importorskip("torch")
+    sys.path.insert(0, str(ROOT))
+    from benchmarks.disarm_impact import sweep
+
+    model = torch.nn.Linear(4, 2)
+    calls: list = []
+
+    def evaluate(baseline):
+        calls.append(1)
+        return {"metric": 1.0}
+
+    rows = sweep(model, torch.float32, evaluate)
+    assert rows, "sweep returned no rows"
+    assert all(isinstance(r["low_bits"], int) for r in rows), "low_bits must be int"
+    assert len(calls) == len(rows), "evaluate was not called for every width"
+
+
 def test_claims_script_runs_without_optional_dependencies():
     import subprocess
     import sys

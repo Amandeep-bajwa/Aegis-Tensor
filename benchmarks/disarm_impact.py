@@ -34,21 +34,18 @@ RESULTS_PATH = ROOT / "benchmarks" / "results" / "disarm_impact.json"
 REPORT_PATH = ROOT / "docs" / "disarm_impact.md"
 
 
-class _Widths(dict):
-    """Mapping of dtype (torch dtype or string) to sweep widths."""
-
-    def __getitem__(self, dtype):
-        name = str(dtype).replace("torch.", "")
-        return super().__getitem__(name)
-
-
-WIDTHS = _Widths(
-    {
+# Widths keyed by torch dtype name (e.g. torch.float32 -> "float32").
+def _widths_for(dtype) -> list[int]:
+    """Return the sweep widths for the given torch dtype."""
+    name = str(dtype).replace("torch.", "")
+    _WIDTHS: dict[str, list[int]] = {
         "float32": [0, 4, 8, 12, 16, 18, 20],
         "float16": [0, 2, 4, 6, 8],
         "bfloat16": [0, 1, 2, 3, 4, 5],
     }
-)
+    return _WIDTHS[name]
+
+
 VIT = "google/vit-base-patch16-224"
 BERT = "yoshitomo-matsubara/bert-base-uncased-sst2"
 GPT2 = "openai-community/gpt2"
@@ -99,7 +96,7 @@ def sweep(model, dtype, evaluate) -> list[dict]:
     rows, baseline = [], None
     try:
         model.load_state_dict(upcast(original))
-        for bits in WIDTHS[dtype]:
+        for bits in _widths_for(dtype):
             if bits:
                 disarmed, _ = disarm_state(original, low_bits=bits, allow_unsafe=True)
                 model.load_state_dict(upcast(disarmed))
@@ -110,8 +107,8 @@ def sweep(model, dtype, evaluate) -> list[dict]:
             rows.append(
                 {
                     "low_bits": bits,
-                    "safe": bits <= SAFE_MAX_LOW_BITS[dtype],
-                    "bound": 0.0 if bits == 0 else max_relative_change(dtype, bits),
+                    "safe": bits <= SAFE_MAX_LOW_BITS[str(dtype).replace("torch.", "")],
+                    "bound": 0.0 if bits == 0 else max_relative_change(str(dtype).replace("torch.", ""), bits),
                     **{k: v for k, v in metrics.items() if not k.startswith("_")},
                     "seconds": round(time.time() - started, 1),
                 }
@@ -174,7 +171,7 @@ def vit_task(images: int) -> dict:
         "n": len(rows),
         "dtype": "float32",
         "metric": "top-1 accuracy (%)",
-        "rows": sweep(model, "float32", evaluate),
+        "rows": sweep(model, torch.float32, evaluate),
     }
 
 
@@ -212,7 +209,7 @@ def bert_task() -> dict:
         "n": len(sentences),
         "dtype": "float32",
         "metric": "accuracy (%)",
-        "rows": sweep(model, "float32", evaluate),
+        "rows": sweep(model, torch.float32, evaluate),
     }
 
 
