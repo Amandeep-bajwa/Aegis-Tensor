@@ -53,6 +53,17 @@ def test_resolve_raises_on_http_error(monkeypatch):
         resolve("nonexistent/model")
 
 
+def test_resolve_raises_clean_message_on_network_error(monkeypatch):
+    """resolve() raises clean 'could not reach Hugging Face' on network failure (status 0)."""
+    monkeypatch.setattr(
+        "aegis.hub._http_get",
+        lambda url, headers=None, limit=None: (0, b"connection timed out"),
+    )
+    with pytest.raises(ValueError, match="could not reach Hugging Face: connection timed out"):
+        resolve("test-org/model")
+
+
+@pytest.mark.claim("C22")
 def test_safetensors_header_is_fetched_with_two_range_requests(monkeypatch, tmp_path):
     """Assert exactly the Range: bytes=0-7 request and then the header-range request, and nothing else."""
     test_file = tmp_path / "model.safetensors"
@@ -82,6 +93,7 @@ def test_safetensors_header_is_fetched_with_two_range_requests(monkeypatch, tmp_
     assert not result.is_suspicious
 
 
+@pytest.mark.claim("C23")
 def test_oversized_header_length_is_refused_without_fetching(monkeypatch):
     """Length field 2^40. Expect a finding and no second request."""
     calls = []
@@ -121,6 +133,7 @@ def test_zero_header_length_is_refused_without_fetching(monkeypatch):
     assert any(f.channel == "header_unreadable" for f in result.findings)
 
 
+@pytest.mark.claim("C24")
 def test_safetensors_server_ignoring_range_is_refused(monkeypatch):
     """Server that answers 200 instead of 206 is flagged as not supporting range requests."""
     calls = []
@@ -197,6 +210,7 @@ def test_leaked_token_in_remote_metadata_is_masked(monkeypatch, tmp_path):
     assert "hf_" in msg
 
 
+@pytest.mark.claim("C25")
 def test_pickle_file_is_reported_not_downloaded(monkeypatch):
     """Pickle files are reported as requiring full download with zero range requests."""
     calls = []
@@ -250,70 +264,132 @@ def test_trust_remote_code_repo_gets_a_finding(monkeypatch):
 
 
 def test_network_error_status_zero_gets_own_message(monkeypatch):
-    """A network failure (status 0) must report a 'network error' message, not 'range not supported'."""
-    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (0, b"timed out"))
+    """A network failure (status 0) must report 'could not reach Hugging Face', not 'range not supported'."""
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (0, b"connection timed out"))
     result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
     assert result.is_suspicious
     assert any(f.channel == "header_unreadable" for f in result.findings)
-    # Must say "network error", not "range requests not supported"
     msgs = [f.message for f in result.findings]
-    assert any("network error" in m for m in msgs), f"Expected 'network error' in one of: {msgs}"
+    assert any("could not reach Hugging Face" in m for m in msgs), f"Expected 'could not reach Hugging Face' in: {msgs}"
     assert not any("range requests not supported" in m for m in msgs), (
         "Status-0 must not say 'range requests not supported'"
     )
 
 
-def test_invalid_json_header_gives_finding(monkeypatch, tmp_path):
+def test_invalid_json_header_gives_finding(monkeypatch):
     """A header with valid length but invalid JSON must return a finding, not raise."""
-    # Build a safetensors file, then corrupt the header JSON bytes
-    from safetensors.numpy import save_file as _save
-    import numpy as np
-    test_file = tmp_path / "corrupted.safetensors"
-    _save({"w": np.zeros((4,), dtype=np.float32)}, test_file)
-    file_bytes = bytearray(test_file.read_bytes())
-    (header_len,) = struct.unpack("<Q", bytes(file_bytes[:8]))
-    # Overwrite header with non-JSON bytes
-    file_bytes[8 : 8 + header_len] = b"\xff" * header_len
-    corrupted = bytes(file_bytes)
+    invalid_json = b"{this is not valid json"
+    header_len = len(invalid_json)
 
     def fake_get(url, headers=None, limit=None):
         headers = headers or {}
         rng = headers.get("Range", "")
         if rng == "bytes=0-7":
-            return 206, corrupted[:8]
-        if rng.startswith(f"bytes=8-"):
-            return 206, corrupted[8 : 8 + header_len]
+            return 206, struct.pack("<Q", header_len)
+        if rng == f"bytes=8-{7 + header_len}":
+            return 206, invalid_json
         return 404, b""
 
     monkeypatch.setattr("aegis.hub._http_get", fake_get)
-    result = fetch_safetensors_header("test-org/model", "abc", "corrupted.safetensors")
+    result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
     assert result.is_suspicious
     assert any(f.channel == "header_unreadable" for f in result.findings)
+
+
+def test_invalid_utf8_header_gives_finding(monkeypatch):
+    """A header with invalid UTF-8 bytes must return a finding, not raise UnicodeDecodeError."""
+    bad_utf8 = b"\x80\x81\x82\x83\x84\x85\x86\x87"
+    header_len = len(bad_utf8)
+
+    def fake_get(url, headers=None, limit=None):
+        headers = headers or {}
+        rng = headers.get("Range", "")
+        if rng == "bytes=0-7":
+            return 206, struct.pack("<Q", header_len)
+        if rng == f"bytes=8-{7 + header_len}":
+            return 206, bad_utf8
+        return 404, b""
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+    result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result.is_suspicious
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+
+
+def test_non_object_json_header_gives_finding(monkeypatch):
+    """A header that parses as valid JSON but is not an object (e.g. a list) returns a finding."""
+    json_list = b"[1, 2, 3, 4]"
+    header_len = len(json_list)
+
+    def fake_get(url, headers=None, limit=None):
+        headers = headers or {}
+        rng = headers.get("Range", "")
+        if rng == "bytes=0-7":
+            return 206, struct.pack("<Q", header_len)
+        if rng == f"bytes=8-{7 + header_len}":
+            return 206, json_list
+        return 404, b""
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+    result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result.is_suspicious
+    assert any(f.channel == "header_unreadable" for f in result.findings)
+    assert any("not a JSON object" in f.message for f in result.findings)
 
 
 def test_fetch_safetensors_header_prefix_error(monkeypatch):
     """fetch_safetensors_header reports failure if prefix fetch fails or is truncated."""
+    # Sub-case A: Non-206 status
     monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (500, b""))
     result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
     assert result.is_suspicious
     assert any(f.channel == "header_unreadable" for f in result.findings)
-    assert any("failed to read" in f.message or "not supported" in f.message for f in result.findings)
+    assert any("not supported" in f.message for f in result.findings)
+
+    # Sub-case B: 206 status but truncated length prefix (< 8 bytes)
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None, limit=None: (206, b"1234"))
+    result_truncated = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result_truncated.is_suspicious
+    assert any("failed to read safetensors header length prefix" in f.message for f in result_truncated.findings)
 
 
 def test_fetch_safetensors_header_body_error(monkeypatch):
     """fetch_safetensors_header reports failure if header bytes fetch fails or is truncated."""
-
-    def fake_get(url, headers=None, limit=None):
+    # Sub-case A: Non-206 status for header bytes
+    def fake_get_500(url, headers=None, limit=None):
         headers = headers or {}
         if headers.get("Range") == "bytes=0-7":
             return 206, struct.pack("<Q", 500)
-        return 500, b""
+        return 500, b"server error"
 
-    monkeypatch.setattr("aegis.hub._http_get", fake_get)
-    result = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
-    assert result.is_suspicious
-    assert any(f.channel == "header_unreadable" for f in result.findings)
-    assert any("failed to read" in f.message or "not supported" in f.message for f in result.findings)
+    monkeypatch.setattr("aegis.hub._http_get", fake_get_500)
+    result_500 = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result_500.is_suspicious
+    assert any("not supported for header bytes (status 500)" in f.message for f in result_500.findings)
+
+    # Sub-case B: Status 0 (network error) for header bytes
+    def fake_get_0(url, headers=None, limit=None):
+        headers = headers or {}
+        if headers.get("Range") == "bytes=0-7":
+            return 206, struct.pack("<Q", 500)
+        return 0, b"dropped connection"
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get_0)
+    result_0 = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result_0.is_suspicious
+    assert any("could not reach Hugging Face: dropped connection" in f.message for f in result_0.findings)
+
+    # Sub-case C: Truncated header bytes (fewer than expected)
+    def fake_get_trunc(url, headers=None, limit=None):
+        headers = headers or {}
+        if headers.get("Range") == "bytes=0-7":
+            return 206, struct.pack("<Q", 500)
+        return 206, b"only-10-bytes"
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get_trunc)
+    result_trunc = fetch_safetensors_header("test-org/model", "abc", "model.safetensors")
+    assert result_trunc.is_suspicious
+    assert any("failed to read complete safetensors header bytes" in f.message for f in result_trunc.findings)
 
 
 def test_scan_remote_file_safetensors_and_other(monkeypatch, tmp_path):
@@ -369,10 +445,18 @@ def test_http_get_local_server():
 
     thread2 = threading.Thread(target=server.handle_request)
     thread2.start()
-    status404, body404 = _http_get(f"http://127.0.0.1:{port}/missing")
+    status404, body404 = _http_get(f"http://127.0.0.1:{port}/missing", limit=10)
     assert status404 == 404
     assert body404 == b"not-found"
     server.server_close()
+
+
+def test_http_get_url_error():
+    """Verify _http_get returns status 0 on network/socket connection errors."""
+    # Connecting to an unbound local port triggers URLError
+    status, body = _http_get("http://127.0.0.1:1")
+    assert status == 0
+    assert len(body) > 0
 
 
 @pytest.mark.network

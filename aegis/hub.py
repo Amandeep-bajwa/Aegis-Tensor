@@ -71,6 +71,9 @@ def resolve(repo: str, revision: str = "main") -> HubRepoInfo:
     api_url = f"https://huggingface.co/api/models/{encoded_repo}/revision/{encoded_rev}"
     status, body = _http_get(api_url, headers={"User-Agent": "aegis-tensor"})
     if status != 200:
+        if status == 0:
+            err = body.decode("utf-8", errors="replace")
+            raise ValueError(f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face")
         raise ValueError(f"Hugging Face API returned status {status} for {repo}@{revision}")
 
     data = json.loads(body.decode("utf-8"))
@@ -102,11 +105,12 @@ def resolve(repo: str, revision: str = "main") -> HubRepoInfo:
     )
 
 
-def _range_not_supported(filename: str, status: int) -> FormatScanResult:
-    """Return a finding for a server that did not respond with 206."""
+def _network_or_range_error(filename: str, status: int, body: bytes, stage: str = "header prefix") -> FormatScanResult:
+    """Return a finding when an HTTP request fails or does not return 206."""
     result = FormatScanResult(path=filename)
     if status == 0:
-        message = "network error while fetching safetensors header (no response from server)"
+        err = body.decode("utf-8", errors="replace")
+        message = f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face"
     else:
         message = f"HTTP range requests not supported by server (status {status})"
     result.findings.append(
@@ -129,7 +133,7 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
     # Request 1: 8-byte length prefix
     status, prefix = _http_get(file_url, headers={"Range": "bytes=0-7"}, limit=8)
     if status != 206:
-        return _range_not_supported(filename, status)
+        return _network_or_range_error(filename, status, prefix, stage="header prefix")
 
     if len(prefix) != 8:
         result = FormatScanResult(path=filename)
@@ -182,7 +186,8 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
     if status != 206:
         result = FormatScanResult(path=filename, header_bytes=header_len)
         if status == 0:
-            message = "network error while fetching safetensors header bytes (no response from server)"
+            err = raw.decode("utf-8", errors="replace")
+            message = f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face"
         else:
             message = f"HTTP range requests not supported for header bytes (status {status})"
         result.findings.append(
@@ -209,18 +214,31 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         )
         return result
 
-    # scan_safetensors_header_bytes may raise json.JSONDecodeError if the
-    # header bytes are not valid JSON (for example, truncated or corrupted).
+    # Validate that raw bytes decode as a valid JSON object.
+    # scan_safetensors_header_bytes expects valid JSON dict and will raise otherwise.
     try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            result = FormatScanResult(path=filename, header_bytes=header_len)
+            result.findings.append(
+                FormatFinding(
+                    "SUSPICIOUS",
+                    "header_unreadable",
+                    "header",
+                    f"safetensors header is not a JSON object (got {type(parsed).__name__})",
+                    "quarantine",
+                )
+            )
+            return result
         return scan_safetensors_header_bytes(raw, header_len, filename)
-    except (json.JSONDecodeError, ValueError, struct.error):
+    except (ValueError, TypeError) as e:
         result = FormatScanResult(path=filename, header_bytes=header_len)
         result.findings.append(
             FormatFinding(
                 "SUSPICIOUS",
                 "header_unreadable",
                 "header",
-                "safetensors header is not valid JSON (possibly truncated or corrupted)",
+                f"safetensors header could not be parsed: {e}",
                 "quarantine",
             )
         )
