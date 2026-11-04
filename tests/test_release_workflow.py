@@ -4,9 +4,12 @@ Parses the release workflow YAML and verifies that:
 1. It triggers only on version tags (`v*`).
 2. Top-level permissions are strictly read-only (`contents: read`).
 3. Only the publishing job has elevated write permissions (`contents: write`).
-4. Wheels are built for Linux x86_64, macOS arm64, macOS x86_64, plus an sdist.
-5. Every wheel is smoke-tested outside the repository checkout before publication.
-6. The publish job depends on successful builds and smoke tests, attaching all artifacts.
+4. Wheels are built for the exact set: Linux x86_64, macOS arm64, macOS x86_64, plus an sdist.
+5. Every wheel is smoke-tested inside the wheel job, after install, before upload.
+6. The publish job depends on both the wheel job and the sdist job.
+
+Each test must be verifiable by removing the thing it covers from the workflow and
+confirming the test fails (see CONTRIBUTING.md).
 """
 
 from pathlib import Path
@@ -15,6 +18,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
+
+EXPECTED_WHEEL_TARGETS = {
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+}
 
 
 def _load_release_workflow() -> dict:
@@ -48,66 +57,104 @@ def test_release_workflow_permissions_least_privilege():
     assert top_perms.get("contents") == "read", "Top-level permissions must be 'contents: read'"
 
     jobs = wf.get("jobs", {})
-    assert "publish" in jobs or "release" in jobs, "Must have a publish or release job"
-
-    # Identify the release job
-    publish_job_name = "publish" if "publish" in jobs else "release"
-    publish_job = jobs[publish_job_name]
+    assert "publish" in jobs, "Must have a 'publish' job"
+    publish_job = jobs["publish"]
 
     # Only publish job has contents: write
     assert publish_job.get("permissions", {}).get("contents") == "write", (
-        f"Job '{publish_job_name}' must declare 'permissions: contents: write'"
+        "Job 'publish' must declare 'permissions: contents: write'"
     )
 
     # Every other job must not have write permissions
     for name, job in jobs.items():
-        if name != publish_job_name:
+        if name != "publish":
             job_perms = job.get("permissions", {})
             assert job_perms.get("contents") != "write", f"Job '{name}' must not have contents: write"
 
 
-def test_release_workflow_builds_three_targets_plus_sdist():
-    wf = _load_release_workflow()
-
-    # Check for wheel build job(s) and sdist job
-    all_content = yaml.dump(wf)
-
-    # Check the three abi3 wheel targets
-    assert "x86_64-unknown-linux-gnu" in all_content or "manylinux" in all_content or "x86_64" in all_content
-    assert "aarch64-apple-darwin" in all_content, "Missing macOS arm64 (aarch64-apple-darwin) target"
-    assert "x86_64-apple-darwin" in all_content, "Missing macOS x86_64 (x86_64-apple-darwin) target"
-
-    # Check sdist build
-    assert "sdist" in all_content, "Must build an sdist"
-
-
-def test_release_workflow_smoke_tests_before_publishing():
+def test_release_workflow_builds_exact_three_targets_plus_sdist():
+    """Assert the exact set of wheel targets — not a loose substring match."""
     wf = _load_release_workflow()
     jobs = wf.get("jobs", {})
-    publish_job_name = "publish" if "publish" in jobs else "release"
-    publish_job = jobs[publish_job_name]
 
-    # Publish must depend on build / smoke test jobs
+    # Collect targets from the matrix
+    found_targets: set[str] = set()
+    for _job_name, job in jobs.items():
+        matrix = job.get("strategy", {}).get("matrix", {})
+        includes = matrix.get("include", [])
+        for entry in includes:
+            if "target" in entry:
+                found_targets.add(entry["target"])
+
+    assert found_targets == EXPECTED_WHEEL_TARGETS, (
+        f"Wheel targets mismatch.\n  Expected: {sorted(EXPECTED_WHEEL_TARGETS)}\n  Got:      {sorted(found_targets)}"
+    )
+
+    # sdist job must exist separately
+    assert "sdist" in jobs, "Must have a separate 'sdist' job"
+
+
+def test_release_workflow_smoke_tests_inside_wheel_job_before_upload():
+    """Smoke-test steps must be inside the wheel job, after install, before upload-artifact."""
+    wf = _load_release_workflow()
+    jobs = wf.get("jobs", {})
+    assert "wheels" in jobs, "Must have a 'wheels' job"
+    wheel_job = jobs["wheels"]
+    steps = wheel_job.get("steps", [])
+
+    step_names = [s.get("name", "") for s in steps]
+    step_uses = [s.get("uses", "") for s in steps]
+
+    # Find the positions of install, smoke test, and upload
+    install_idx = next(
+        (i for i, name in enumerate(step_names) if "install" in name.lower() and "wheel" in name.lower()), None
+    )
+    smoke_idx = next((i for i, name in enumerate(step_names) if "smoke" in name.lower()), None)
+    upload_idx = next((i for i, uses in enumerate(step_uses) if "upload-artifact" in uses), None)
+
+    assert install_idx is not None, "Wheel job must have an 'install wheel' step"
+    assert smoke_idx is not None, "Wheel job must have a 'smoke test' step"
+    assert upload_idx is not None, "Wheel job must have an 'upload-artifact' step"
+
+    assert install_idx < smoke_idx, "Smoke test must come after the install step"
+    assert smoke_idx < upload_idx, "Smoke test must come before the upload step"
+
+    # Verify smoke test content
+    smoke_step = steps[smoke_idx]
+    run_script = smoke_step.get("run", "")
+    assert "aegis.CORE_AVAILABLE" in run_script, "Smoke test must verify aegis.CORE_AVAILABLE"
+    assert "aegis --version" in run_script, "Smoke test must run aegis --version"
+    assert "aegis doctor" in run_script, "Smoke test must run aegis doctor"
+    assert "aegis scan" in run_script, "Smoke test must run aegis scan on a model file"
+
+    # working-directory must be outside the checkout (runner.temp)
+    working_dir = smoke_step.get("working-directory", "")
+    assert "runner.temp" in working_dir or "RUNNER_TEMP" in working_dir, (
+        "Smoke test must run from outside the checkout directory"
+    )
+
+
+def test_release_workflow_publish_needs_wheels_and_sdist():
+    """publish must declare 'needs' containing both the wheel job and the sdist job."""
+    wf = _load_release_workflow()
+    jobs = wf.get("jobs", {})
+    assert "publish" in jobs, "Must have a 'publish' job"
+    publish_job = jobs["publish"]
+
     needs = publish_job.get("needs")
-    assert needs is not None, f"Job '{publish_job_name}' must declare 'needs'"
+    assert needs is not None, "Job 'publish' must declare 'needs'"
     if isinstance(needs, str):
         needs = [needs]
 
-    # All workflow content dumped for inspection of smoke test commands
-    all_content = yaml.dump(wf)
-
-    # Parity with the `wheel` smoke test in ci.yml
-    assert "aegis.CORE_AVAILABLE" in all_content, "Smoke test must verify aegis.CORE_AVAILABLE"
-    assert "aegis --version" in all_content, "Smoke test must run aegis --version"
-    assert "aegis doctor" in all_content, "Smoke test must run aegis doctor"
-    assert "aegis scan" in all_content, "Smoke test must run aegis scan on a model file"
+    assert "wheels" in needs, f"'publish' must need 'wheels', got: {needs}"
+    assert "sdist" in needs, f"'publish' must need 'sdist', got: {needs}"
 
 
 def test_release_workflow_attaches_artifacts_to_github_release():
     wf = _load_release_workflow()
     jobs = wf.get("jobs", {})
-    publish_job_name = "publish" if "publish" in jobs else "release"
-    publish_job = jobs[publish_job_name]
+    assert "publish" in jobs, "Must have a 'publish' job"
+    publish_job = jobs["publish"]
 
     steps = publish_job.get("steps", [])
     step_content = yaml.dump(steps)
