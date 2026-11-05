@@ -6,6 +6,7 @@ downloading full model checkpoints over the network.
 
 from __future__ import annotations
 
+import http.client
 import json
 import struct
 import urllib.error
@@ -34,6 +35,7 @@ def _http_get(
     url: str,
     headers: dict[str, str] | None = None,
     limit: int | None = None,
+    timeout: float = 30,
 ) -> tuple[int, bytes]:
     """Single network access gateway for all Hub operations.
 
@@ -45,14 +47,18 @@ def _http_get(
     """
     req = urllib.request.Request(url, headers=headers or {})  # noqa: S310
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             body = resp.read(limit + 1) if limit is not None else resp.read()
             return resp.status, body
     except urllib.error.HTTPError as e:
-        body = e.read(limit + 1) if limit is not None else e.read()
+        try:
+            body = e.read(limit + 1) if limit is not None else e.read()
+        except (OSError, http.client.HTTPException):
+            body = b""
         return e.code, body
-    except urllib.error.URLError as e:
-        return 0, str(e.reason).encode("utf-8")
+    except (OSError, http.client.HTTPException) as e:
+        reason = getattr(e, "reason", e)
+        return 0, str(reason).encode("utf-8")
 
 
 @dataclass
@@ -127,8 +133,10 @@ def _network_or_range_error(filename: str, status: int, body: bytes, stage: str 
 
 def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanResult:
     """Fetch and scan the header of a remote safetensors file using two HTTP range requests."""
+    encoded_repo = urllib.parse.quote(repo, safe="/")
+    encoded_sha = urllib.parse.quote(sha, safe="")
     encoded_filename = urllib.parse.quote(filename, safe="/")
-    file_url = f"https://huggingface.co/{repo}/resolve/{sha}/{encoded_filename}"
+    file_url = f"https://huggingface.co/{encoded_repo}/resolve/{encoded_sha}/{encoded_filename}"
 
     # Request 1: 8-byte length prefix
     status, prefix = _http_get(file_url, headers={"Range": "bytes=0-7"}, limit=8)

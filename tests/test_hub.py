@@ -460,10 +460,31 @@ def test_http_get_url_error():
     assert len(body) > 0
 
 
-@pytest.mark.network
-def test_network_fetch_real_hub():
-    """Optional real-network check (excluded by default, run with `pytest -m network`)."""
-    status, body = _http_get("https://huggingface.co/api/models/bert-base-uncased/revision/main")
-    assert status == 200
-    data = json.loads(body.decode("utf-8"))
-    assert "sha" in data
+def test_http_get_read_stall_mid_body():
+    """Verify _http_get catches read timeouts and stalled servers without raising unhandled exceptions."""
+    import time
+
+    class StallHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(206)
+            self.send_header("Content-Range", "bytes 0-7/100")
+            self.send_header("Content-Length", "8")
+            self.end_headers()
+            self.wfile.write(b"x")
+            self.wfile.flush()
+            time.sleep(0.3)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), StallHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.handle_request)
+    thread.start()
+
+    # Pass short timeout so test finishes in <0.2s
+    status, body = _http_get(f"http://127.0.0.1:{port}/stall", limit=8, timeout=0.1)
+    assert status == 0
+    assert len(body) > 0
+    server.server_close()
+    thread.join()
