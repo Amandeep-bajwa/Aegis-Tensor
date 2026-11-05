@@ -123,3 +123,6 @@ module = [
     "modelscan.*",
 ]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-m 'not network'"

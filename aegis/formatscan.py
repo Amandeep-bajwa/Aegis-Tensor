@@ -42,18 +42,9 @@ class FormatScanResult:
         return bool(self.findings)
 
 
-def scan_safetensors_header(path: str | Path) -> FormatScanResult:
-    """Check the safetensors header for data hidden outside the tensor bytes."""
-    path = Path(path)
-    result = FormatScanResult(path=str(path))
-    with open(path, "rb") as handle:
-        prefix = handle.read(8)
-        if len(prefix) < 8:
-            return result
-        (header_len,) = struct.unpack("<Q", prefix)
-        raw = handle.read(header_len)
-
-    result.header_bytes = header_len
+def scan_safetensors_header_bytes(raw: bytes, header_len: int, label: str = "") -> FormatScanResult:
+    """Check parsed safetensors header bytes for data hidden outside tensor bytes."""
+    result = FormatScanResult(path=label, header_bytes=header_len)
     full = json.loads(raw)
     header = dict(full)
     metadata = header.pop("__metadata__", None) or {}
@@ -95,9 +86,6 @@ def scan_safetensors_header(path: str | Path) -> FormatScanResult:
                 )
             )
 
-    # The canonical header has no whitespace. Any extra bytes are unexplained padding.
-    # Re-serialise the parsed header as written, including an empty __metadata__ block.
-    # ensure_ascii=False matches the library, which writes UTF-8 without escaping.
     canonical = json.dumps(full, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     slack = header_len - len(canonical)
     if slack > MAX_HEADER_SLACK_BYTES:
@@ -124,3 +112,17 @@ def scan_safetensors_header(path: str | Path) -> FormatScanResult:
                 )
             )
     return result
+
+
+def scan_safetensors_header(path: str | Path) -> FormatScanResult:
+    """Check the safetensors header for data hidden outside the tensor bytes."""
+    path = Path(path)
+    result = FormatScanResult(path=str(path))
+    with open(path, "rb") as handle:
+        prefix = handle.read(8)
+        if len(prefix) < 8:
+            return result
+        (header_len,) = struct.unpack("<Q", prefix)
+        raw = handle.read(header_len)
+
+    return scan_safetensors_header_bytes(raw, header_len, str(path))
