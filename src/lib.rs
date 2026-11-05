@@ -364,7 +364,20 @@ struct Thresholds {
     entropy: f64,
     benford: Option<f64>,
     exponent: f64,
+    /// Exponent-lane threshold for float16 only. Its high byte also holds two mantissa
+    /// bits, so clean float16 tensors score higher than float32 or bfloat16 ones.
+    exponent_f16: f64,
     plane: f64,
+}
+
+/// The exponent-lane threshold for a dtype: float16 has its own, every other float dtype
+/// uses the general one.
+fn exponent_threshold_for(dtype: Dtype, t: &Thresholds) -> f64 {
+    if matches!(dtype, Dtype::F16) {
+        t.exponent_f16
+    } else {
+        t.exponent
+    }
 }
 
 /// Apply every tensor rule to one tensor's raw little-endian bytes. Used for safetensors
@@ -452,12 +465,13 @@ fn analyze_tensor(
     }
 
     // Rule 2: sign/exponent lane is random-looking, so the float values were overwritten.
+    let exponent_threshold = exponent_threshold_for(dtype, &t);
     if let Some(lane_entropy) = exponent_lane_entropy {
-        if lane_entropy > t.exponent {
+        if lane_entropy > exponent_threshold {
             rules.push("exponent_lane".to_string());
             anomaly_reasons.push(format!(
                 "Sign/exponent bytes are near-uniform ({:.4} > threshold {:.4}) - float values overwritten with encrypted or compressed data",
-                lane_entropy, t.exponent
+                lane_entropy, exponent_threshold
             ));
         }
     }
@@ -522,6 +536,9 @@ fn analyze_tensor(
 ///    overwritten with random-looking data). Clean weights measure about 2.7 bits,
 ///    and wide-dynamic-range clean weights reach about 6 bits. The default of 6.5
 ///    therefore detects overwrites covering roughly half of a tensor's floats.
+///    float16 uses `exponent_f16_entropy_threshold` (7.2) instead: its high byte also
+///    holds two mantissa bits, and clean float16 biases measured up to 6.85
+///    (docs/calibration.md).
 /// 3. Low mantissa bit planes below `plane_floor` (structured data hidden in the
 ///    least significant bits). Clean weights measure about 8 bits.
 ///
@@ -533,7 +550,8 @@ fn analyze_tensor(
     entropy_threshold = 7.92,
     benford_mad_threshold = None,
     exponent_entropy_threshold = 6.5,
-    plane_floor = 7.5
+    plane_floor = 7.5,
+    exponent_f16_entropy_threshold = 7.2
 ))]
 pub fn scan_safetensors(
     path: &str,
@@ -541,6 +559,7 @@ pub fn scan_safetensors(
     benford_mad_threshold: Option<f64>,
     exponent_entropy_threshold: f64,
     plane_floor: f64,
+    exponent_f16_entropy_threshold: f64,
 ) -> PyResult<Vec<TensorScanResult>> {
     let file = File::open(path)
         .map_err(|e| PyIOError::new_err(format!("Failed to open model file '{}': {}", path, e)))?;
@@ -561,6 +580,7 @@ pub fn scan_safetensors(
         entropy: entropy_threshold,
         benford: benford_mad_threshold,
         exponent: exponent_entropy_threshold,
+        exponent_f16: exponent_f16_entropy_threshold,
         plane: plane_floor,
     };
     let results: Vec<TensorScanResult> = tensor_names
@@ -635,7 +655,8 @@ fn parse_dtype(name: &str) -> Option<(Dtype, usize)> {
     entropy_threshold = 7.92,
     benford_mad_threshold = None,
     exponent_entropy_threshold = 6.5,
-    plane_floor = 7.5
+    plane_floor = 7.5,
+    exponent_f16_entropy_threshold = 7.2
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn scan_tensor_bytes(
@@ -647,6 +668,7 @@ pub fn scan_tensor_bytes(
     benford_mad_threshold: Option<f64>,
     exponent_entropy_threshold: f64,
     plane_floor: f64,
+    exponent_f16_entropy_threshold: f64,
 ) -> PyResult<TensorScanResult> {
     let (parsed, width) = parse_dtype(dtype).ok_or_else(|| {
         pyo3::exceptions::PyValueError::new_err(format!("unsupported dtype '{}'", dtype))
@@ -666,6 +688,7 @@ pub fn scan_tensor_bytes(
         entropy: entropy_threshold,
         benford: benford_mad_threshold,
         exponent: exponent_entropy_threshold,
+        exponent_f16: exponent_f16_entropy_threshold,
         plane: plane_floor,
     };
     Ok(analyze_tensor(name, parsed, shape, data, thresholds))
@@ -926,5 +949,33 @@ mod tests {
             "mixed plane fraction was {}",
             fraction
         );
+    }
+
+    /// Two-byte words whose high (sign/exponent) byte cycles through 112 values: an
+    /// exponent lane of about 6.8 bits, between the general and the float16 thresholds.
+    fn wide_exponent_lane_words(n: usize) -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| [(i % 251) as u8, (i % 112) as u8])
+            .collect()
+    }
+
+    #[test]
+    fn test_analyze_tensor_uses_the_f16_exponent_threshold_only_for_f16() {
+        let thresholds = Thresholds {
+            entropy: 7.92,
+            benford: None,
+            exponent: 6.5,
+            exponent_f16: 7.2,
+            plane: 7.5,
+        };
+        let data = wide_exponent_lane_words(4096);
+
+        let as_f16 = analyze_tensor("b", Dtype::F16, vec![4096], &data, thresholds);
+        let as_bf16 = analyze_tensor("b", Dtype::BF16, vec![4096], &data, thresholds);
+
+        let lane = as_f16.exponent_lane_entropy.expect("lane is measured");
+        assert!(lane > 6.5 && lane < 7.2, "fixture lane was {}", lane);
+        assert!(!as_f16.rules.contains(&"exponent_lane".to_string()));
+        assert!(as_bf16.rules.contains(&"exponent_lane".to_string()));
     }
 }

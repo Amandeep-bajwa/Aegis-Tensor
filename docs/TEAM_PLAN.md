@@ -19,12 +19,14 @@ Mukul (@Mukul09800) owns issue #10 (docs and presentation), which is outside thi
 
 ## Rules
 
-1. **Read [CLAUDE.md](../CLAUDE.md), [docs/DECISIONS.md](DECISIONS.md) and your issue before writing code.**
+1. **Read [CLAUDE.md](../CLAUDE.md), [CONTRIBUTING.md](../CONTRIBUTING.md),
+   [docs/DECISIONS.md](DECISIONS.md) and your issue before writing code.** CONTRIBUTING.md lists
+   exactly what gets a PR accepted.
 2. **Wait for the quality-gates PR (K0) to merge before opening a PR.** You can read code and
    write tests before then. After K0, `main` is protected: CI must be green, a code owner must
    approve, and every review conversation must be resolved.
-3. **One concern per PR, under 400 changed lines** (test fixtures excluded). Split larger work.
-   Conventional Commit titles, for example `feat(hub): scan safetensors headers before download`.
+3. **One concern per PR. There is no limit on PR size; a PR is judged on quality.** Conventional
+   Commit titles, for example `feat(hub): scan safetensors headers before download`.
 4. **Tests first.** Write the tests in your issue, watch them fail, then make them pass. Diff
    coverage on a PR must be at least 90%.
 5. **Never weaken, skip or delete a test, and never loosen a detection threshold, to make CI
@@ -179,7 +181,7 @@ All payloads are benign: at most `touch <tmp_path>/MARKER`, and the `marker` fix
 - [ ] Every test above was seen failing before the change and passes after it.
 - [ ] CI is fully green; diff coverage ≥ 90%.
 - [ ] `docs/claims.json`, `docs/THREAT_MATRIX.md` and `CHANGELOG.md` are updated.
-- [ ] The PR is under 400 changed lines, or split.
+- [ ] The PR changes only what this issue asks for.
 
 #### Don't
 - Don't unpickle anything, even "just to compare".
@@ -318,7 +320,7 @@ in the README until this is fixed and re-measured.
 - [ ] CI is fully green; diff coverage ≥ 90%.
 - [ ] docs/calibration.md, docs/THREAT_MATRIX.md, `docs/claims.json` and CHANGELOG.md updated.
 - [ ] Krish approved the threshold change in review.
-- [ ] The PR is under 400 changed lines, not counting regenerated results files.
+- [ ] The PR changes only what this issue asks for.
 
 #### Don't
 - Don't raise the general `exponent` threshold (6.5); only float16 gets its own value.
@@ -379,7 +381,7 @@ use. A payload inside them is covered by one rule with almost no margin (docs/ca
   realistic weight distribution), and the same pair for bnb-4bit and FP8.
 
 #### Done when
-- [ ] Two PRs (unpacking, then rules plus calibration), each under 400 changed lines.
+- [ ] Two PRs (unpacking, then rules plus calibration).
 - [ ] Unpacking reads from the memory map; no tensor is copied whole.
 - [ ] False-positive rates per quantized format are published in docs/calibration.md.
 - [ ] Threat-matrix rows and claims added; CHANGELOG updated.
@@ -573,7 +575,7 @@ Every test replaces `aegis.hub._http_get` with a fake (monkeypatch). No test tou
   marker in `tests/conftest.py` and add `-m "not network"` to the default pytest options).
 
 #### Done when
-- [ ] Two PRs, each under 400 changed lines.
+- [ ] Two PRs: (a), then (b) after (a) has merged.
 - [ ] No new runtime dependency; all network access goes through `aegis/hub.py:_http_get`.
 - [ ] No test uses the network unless marked `network` (excluded by default).
 - [ ] Remote and local scans of the same header give the same findings.
@@ -598,7 +600,7 @@ it with monkeypatch and never touch the network. No new runtime dependencies. Re
 aegis/formatscan.py by refactoring scan_safetensors_header so its checks run on header bytes;
 existing tests must keep passing unchanged. Cap the header length at 100 MB before fetching. Never
 download or load pickle files. Do not change any detection threshold or any existing test without
-explaining why in the PR. Keep the PR under 400 changed lines. Run: pytest tests/, ruff check .,
+explaining why in the PR. Run: pytest tests/, ruff check .,
 ruff format --check ., mypy aegis, python scripts/claims.py --write. Every claim needs a test.
 Do not use words like "zero-download" or "very-high precision".
 
@@ -650,7 +652,7 @@ Without wheels, every user needs Rust and a compiler. K3 (the release) cannot sh
 #### Done when
 - [ ] A green run on your fork for `v0.0.0-test` is linked in the PR, with all four artifacts attached.
 - [ ] Every wheel is smoke-tested before the publish step runs.
-- [ ] CI is fully green; CHANGELOG updated; PR under 400 lines.
+- [ ] CI is fully green; CHANGELOG updated.
 
 #### Don't
 - Don't publish to PyPI in this issue.
@@ -665,7 +667,7 @@ parses the workflow YAML and checks the trigger, targets, smoke tests and permis
 see it fail, then write .github/workflows/release.yml. Use PyO3/maturin-action to build abi3
 wheels for linux x86_64 (manylinux), macos arm64 and macos x86_64, plus an sdist. Copy the smoke
 test from the `wheel` job in .github/workflows/ci.yml. Only the publishing job gets
-`contents: write`. Do not publish to PyPI. Keep the PR under 400 lines and do not touch any other
+`contents: write`. Do not publish to PyPI. Do not touch any other
 workflow. Every claim in the PR description needs evidence (a link to the green run on my fork).
 
 [paste issue A2 here]
@@ -728,7 +730,7 @@ in the README, but nothing tests that it actually catches a mismatch.
 - [ ] CHANGELOG.md covers every user-visible change since 0.1.0.
 - [ ] Each negative test fails if the corresponding check in `scripts/claims.py` is removed.
 - [ ] The lint job runs `python scripts/claims.py`.
-- [ ] CI is fully green; diff coverage ≥ 90%; PR under 400 lines (CHANGELOG text excluded).
+- [ ] CI is fully green; diff coverage ≥ 90%.
 
 #### Don't
 - Don't change claim wording in `docs/claims.json` in this PR.
@@ -746,7 +748,7 @@ check in scripts/claims.py is deleted; prove that by deleting it temporarily. Th
 `python scripts/claims.py` to the lint job in .github/workflows/ci.yml, after making sure it
 runs without torch (benchmarks/disarm_impact.py imports torch at module level today; move it into
 the functions that use it). Do not change docs/claims.json wording, any detection
-threshold or any existing test. Keep the PR under 400 changed lines, not counting CHANGELOG text.
+threshold or any existing test.
 
 [paste issue A3 here]
 ```
@@ -812,7 +814,7 @@ in `tests/test_threat_matrix.py`) and a known limit in the README (L02). Anyone 
 - [ ] The T19 test passes without `xfail`; L02 is gone and T19 is `tested`.
 - [ ] Calibration on small-tensor-heavy models shows no new false positive (numbers in the PR).
 - [ ] CI is fully green; diff coverage ≥ 90%; `cargo clippy -D warnings` clean.
-- [ ] docs/THREAT_MATRIX.md, `docs/claims.json` and CHANGELOG.md updated; PR under 400 lines.
+- [ ] docs/THREAT_MATRIX.md, `docs/claims.json` and CHANGELOG.md updated.
 
 #### Don't
 - Don't lower `MIN_LANE_ELEMENTS`; small samples are too noisy on their own.
@@ -834,7 +836,7 @@ aegis/findings.py from_safetensors. Do not change MIN_LANE_ELEMENTS or any thres
 weaken any test. After editing Rust, run `maturin develop --release` before pytest. Run:
 cargo fmt --all --check; cargo clippy --all-targets --no-default-features -- -D warnings;
 cargo test --no-default-features; pytest tests/; ruff check .; mypy aegis;
-python scripts/claims.py --write. Keep the PR under 400 changed lines.
+python scripts/claims.py --write.
 
 [paste issue H1 here]
 ```

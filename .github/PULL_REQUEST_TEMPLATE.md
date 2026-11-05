@@ -1,6 +1,6 @@
 <!--
 Title: a Conventional Commit, for example `fix(picklescan): resolve callables built by REDUCE`.
-Read CLAUDE.md and your issue before opening this PR. PRs that skip a section are sent back.
+Read CLAUDE.md, CONTRIBUTING.md and your issue before opening this PR. PRs that skip a section are sent back.
 -->
 
 Closes #
@@ -30,7 +30,7 @@ Summarise what it found and what you did about each point. -->
 ## Checklist
 
 - [ ] The title is a Conventional Commit (`feat:`, `fix:`, `test:`, `docs:`, `ci:`, `chore:`, `refactor:`, `perf:`, `style:`).
-- [ ] This PR covers one issue only and changes under 400 lines, not counting test fixtures.
+- [ ] This PR covers one issue only, and every change in it is needed for that issue.
 - [ ] I wrote the tests first, and they fail without the change.
 - [ ] No test was weakened, skipped or deleted, and no detection threshold was loosened.
 - [ ] Nothing from a scanned file is loaded, unpickled, rendered or imported in-process.

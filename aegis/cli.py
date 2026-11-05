@@ -247,7 +247,12 @@ def _scan_file_core(path: Path, thresholds: dict, keep_streams: bool = False) ->
         raise ScanError("the Rust core (aegis_core) is not compiled; run `maturin develop` or `pip install -e .`")
     try:
         tensors = scan_safetensors(
-            str(path), thresholds["entropy"], thresholds["benford"], thresholds["exponent"], thresholds["plane"]
+            str(path),
+            thresholds["entropy"],
+            thresholds["benford"],
+            thresholds["exponent"],
+            thresholds["plane"],
+            exponent_f16_entropy_threshold=thresholds["exponent_f16"],
         )
         header = scan_safetensors_header(path)
     except Exception as e:  # malformed safetensors: core parse error, bad header JSON or encoding
@@ -359,7 +364,8 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
     benford = thresholds["benford"]
     benford_note = f"Benford MAD > {benford:.4f}" if benford is not None else "Benford off"
     console.print(
-        f"[dim]Thresholds: Entropy > {thresholds['entropy']:.2f} | Exponent lane > {thresholds['exponent']:.2f} | "
+        f"[dim]Thresholds: Entropy > {thresholds['entropy']:.2f} | "
+        f"Exponent lane > {thresholds['exponent']:.2f} (float16 > {thresholds['exponent_f16']:.2f}) | "
         f"Low-bit plane < {thresholds['plane']:.2f} | {benford_note}[/dim]\n"
     )
 
@@ -389,9 +395,8 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
 
         entropy_color = "red" if res.entropy > thresholds["entropy"] else "white"
         lane = res.exponent_lane_entropy
-        lane_text = (
-            "-" if lane is None else (f"[red]{lane:.4f}[/red]" if lane > thresholds["exponent"] else f"{lane:.4f}")
-        )
+        lane_limit = thresholds["exponent_f16"] if res.dtype == "F16" else thresholds["exponent"]
+        lane_text = "-" if lane is None else (f"[red]{lane:.4f}[/red]" if lane > lane_limit else f"{lane:.4f}")
         plane = res.low_plane_entropy
         plane_text = (
             "-" if plane is None else (f"[red]{plane:.4f}[/red]" if plane < thresholds["plane"] else f"{plane:.4f}")
@@ -468,8 +473,14 @@ def scan_command(
     exponent_threshold: float = typer.Option(
         DEFAULT_THRESHOLDS["exponent"],
         "--exponent-threshold",
-        help="Sign/exponent byte-lane entropy (bits) above which float values count as overwritten. "
-        "Clean weights measure about 2.7.",
+        help="Sign/exponent byte-lane entropy (bits) above which float32 and bfloat16 values count as "
+        "overwritten. Clean weights measure about 2.7.",
+    ),
+    exponent_threshold_f16: float = typer.Option(
+        DEFAULT_THRESHOLDS["exponent_f16"],
+        "--exponent-threshold-f16",
+        help="Sign/exponent byte-lane entropy (bits) above which float16 values count as overwritten. "
+        "Higher than --exponent-threshold because the float16 high byte also holds two mantissa bits.",
     ),
     plane_floor: float = typer.Option(
         DEFAULT_THRESHOLDS["plane"],
@@ -525,6 +536,7 @@ def scan_command(
     thresholds = {
         "entropy": entropy_threshold,
         "exponent": exponent_threshold,
+        "exponent_f16": exponent_threshold_f16,
         "plane": plane_floor,
         "benford": benford_threshold,
     }

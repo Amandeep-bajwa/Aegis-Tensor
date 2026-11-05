@@ -43,16 +43,15 @@
       "benchmark": "docs/calibration.md",
       "text": "False positives at default thresholds on popular public models: {safetensors_flagged} of {safetensors_models} safetensors models, {mlx_flagged} of {mlx_models} MLX models and {gguf_flagged} of {gguf_models} GGUF files raise a finding. {template_flagged} of {template_files} GGUF files have a flagged chat template.",
       "values": {
-        "safetensors_flagged": 0,
-        "safetensors_models": 3,
+        "safetensors_flagged": 1,
+        "safetensors_models": 49,
         "mlx_flagged": 0,
-        "mlx_models": 0,
+        "mlx_models": 14,
         "gguf_flagged": 0,
-        "gguf_models": 0,
-        "template_flagged": 0,
-        "template_files": 3
-      },
-      "status": "pending"
+        "gguf_models": 14,
+        "template_flagged": 1,
+        "template_files": 34
+      }
     },
     {
       "id": "C11",

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Instructions for AI assistants (and people) working in this repository. Read this and
-[docs/DECISIONS.md](docs/DECISIONS.md) before changing anything.
+Instructions for AI assistants (and people) working in this repository. Read this,
+[docs/DECISIONS.md](docs/DECISIONS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before changing anything.
 
 Aegis answers one question: **is this model file safe to load and run?** It reads model files
 without loading them and gives one verdict with a next step.
@@ -42,8 +42,8 @@ After changing `src/lib.rs`, run `maturin develop --release` again before the Py
 
 ## Engineering rules
 
-- Plan before any change that touches more than one file. One issue per PR, under 400 changed lines
-  (fixtures excluded); split larger work.
+- Plan before any change that touches more than one file. One concern per PR. There is no limit on
+  PR size: a PR is judged on quality, and CONTRIBUTING.md lists exactly what gets one accepted.
 - Write the test first and watch it fail. Conventional Commit PR titles.
 - Never weaken, skip or delete a test, and never loosen a detection threshold, to make CI pass.
   Threshold changes need calibration evidence (`benchmarks/calibrate.py`, docs/calibration.md) and
