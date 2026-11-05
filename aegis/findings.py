@@ -479,7 +479,7 @@ def from_safetensors(path: str, tensor_results, header_result=None) -> list[Find
                 )
             )
     for finding in header_result.findings if header_result is not None else []:
-        rule = RULE_BY_CODE[finding.channel]
+        rule = RULE_BY_CODE.get(finding.channel, "AEGIS-H001")
         location = {"file": path}
         if finding.channel == "metadata":
             location["header_key"] = finding.where

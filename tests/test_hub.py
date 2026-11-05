@@ -8,18 +8,25 @@ import http.server
 import json
 import struct
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
 from safetensors.numpy import save_file
+from typer.testing import CliRunner
 
+from aegis import hub
+from aegis.cli import app
 from aegis.formatscan import scan_safetensors_header
 from aegis.hub import (
     _http_get,
+    fetch_gguf_header,
     fetch_safetensors_header,
     resolve,
     scan_remote_file,
+    scan_remote_repo,
 )
+from tests.test_model_formats import SSTI_TEMPLATE, gguf_bytes
 
 
 def _weights(n=1024):
@@ -488,3 +495,143 @@ def test_http_get_read_stall_mid_body():
     assert len(body) > 0
     server.server_close()
     thread.join()
+
+
+def _range_response(data: bytes, headers: dict | None) -> tuple[int, bytes]:
+    range_hdr = (headers or {}).get("Range")
+    if range_hdr and range_hdr.startswith("bytes="):
+        s, _, e = range_hdr[6:].partition("-")
+        return 206, data[int(s) : int(e) + 1 if e else None]
+    return 200, data
+
+
+def test_gguf_template_injection_found_from_header_only(monkeypatch):
+    """Chat template injection in a GGUF header is detected using only range requests."""
+    gguf_raw = gguf_bytes([("tokenizer.chat_template", SSTI_TEMPLATE)], [])
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: _range_response(gguf_raw, headers))
+
+    result = fetch_gguf_header("org/model", "sha123", "model.gguf")
+    assert result.is_suspicious and result.is_critical
+    assert any(f.code == "gguf_template" and f.severity == "CRITICAL" for f in result.findings)
+    assert any("CVE-2024-34359" in f.message for f in result.findings)
+
+
+def test_gguf_header_growth_stops_at_cap(monkeypatch):
+    """Range requests grow until reaching the 64 MB cap and refuse to fetch further."""
+    calls = []
+    truncated = b"GGUF" + struct.pack("<IQQ", 3, 0, 1) + struct.pack("<Q", 100_000_000)
+
+    def fake_get(url, headers=None):
+        range_hdr = (headers or {}).get("Range", "")
+        calls.append(range_hdr)
+        parts = range_hdr[6:].split("-") if range_hdr.startswith("bytes=") else [0, len(truncated) - 1]
+        start, end = int(parts[0]), int(parts[1])
+        size = end - start + 1
+        prefix = truncated[start : end + 1] if start < len(truncated) else b""
+        return 206, prefix + b"\x00" * (size - len(prefix))
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+    result = fetch_gguf_header("org/model", "sha123", "huge.gguf")
+    assert result.is_suspicious
+    assert any(f.code == "gguf_malformed" and "64 MB" in f.message for f in result.findings)
+    assert any(f"-{hub.MAX_GGUF_HEADER_BYTES - 1}" in c for c in calls)
+
+
+def test_gguf_malformed_and_eof_handling(monkeypatch):
+    """Non-GGUF files and premature EOF are caught and flagged without growing."""
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (206, b"NOT_GGUF_DATA"))
+    assert fetch_gguf_header("org/model", "sha123", "bad.gguf").is_suspicious
+
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (500, b""))
+    assert fetch_gguf_header("org/model", "sha123", "err.gguf").is_suspicious
+
+
+def test_cli_hf_scan_json_validates_against_schema(monkeypatch):
+    """CLI scan of a hf:// repository outputs valid JSON conforming to findings-v1.schema.json."""
+    import jsonschema
+
+    runner = CliRunner()
+    root = Path(__file__).resolve().parent.parent
+    schema_path = root / "docs" / "schema" / "findings-v1.schema.json"
+    findings_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    st_bytes = struct.pack("<Q", 2) + b"{}"
+    gguf_raw = gguf_bytes([("tokenizer.chat_template", SSTI_TEMPLATE)], [])
+    api_payload = {
+        "sha": "1234567890abcdef1234567890abcdef12345678",
+        "siblings": [
+            {"rfilename": "model.safetensors"},
+            {"rfilename": "model.gguf"},
+            {"rfilename": "pytorch_model.bin"},
+            {"rfilename": "modeling_custom.py"},
+        ],
+    }
+
+    def fake_get(url, headers=None):
+        if "api/models" in url:
+            return 200, json.dumps(api_payload).encode("utf-8")
+        if "model.safetensors" in url:
+            return _range_response(st_bytes, headers)
+        if "model.gguf" in url:
+            return _range_response(gguf_raw, headers)
+        if "pytorch_model.bin" in url:
+            return 200, b"pickle-binary"
+        return 404, b""
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+    res = runner.invoke(app, ["scan", "hf://test-org/full-repo", "--format", "json"])
+    assert res.exit_code == 1
+    doc = json.loads(res.stdout)
+
+    validator = jsonschema.Draft202012Validator(
+        findings_schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
+    validator.validate(doc)
+    assert doc["max_severity"] == "critical"
+    file_paths = [f["path"] for f in doc["files"]]
+    assert any("model.safetensors" in p for p in file_paths)
+    assert any("model.gguf" in p for p in file_paths)
+    assert any("pytorch_model.bin" in p for p in file_paths)
+
+
+def test_cli_hf_scan_text_and_sarif(monkeypatch):
+    """CLI scan of a hf:// repository works in text and sarif formats."""
+    runner = CliRunner()
+    gguf_raw = gguf_bytes([("general.name", "clean")], [])
+    api_payload = {
+        "sha": "1234567890abcdef1234567890abcdef12345678",
+        "siblings": [{"rfilename": "model.gguf"}],
+    }
+
+    def fake_get(url, headers=None):
+        if "api/models" in url:
+            return 200, json.dumps(api_payload).encode("utf-8")
+        return 206, gguf_raw
+
+    monkeypatch.setattr("aegis.hub._http_get", fake_get)
+
+    # Text format
+    res_text = runner.invoke(app, ["scan", "hf://test-org/clean-repo"])
+    assert res_text.exit_code == 0
+    assert "hf://test-org/clean-repo" in res_text.stdout
+
+    # Sarif format
+    res_sarif = runner.invoke(app, ["scan", "hf://test-org/clean-repo", "--format", "sarif"])
+    assert res_sarif.exit_code == 0
+    sarif = json.loads(res_sarif.stdout)
+    assert sarif["version"] == "2.1.0"
+
+
+def test_cli_hf_scan_error_exits_2(monkeypatch):
+    """When remote repo fails to resolve, scan reports error and exits 2."""
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (404, b"Not Found"))
+    assert CliRunner().invoke(app, ["scan", "hf://nonexistent/repo"]).exit_code == 2
+
+
+def test_scan_remote_repo_empty(monkeypatch):
+    """Remote repository with no model files returns repository-level outcome."""
+    payload = {"sha": "abcdef123456", "siblings": [{"rfilename": "README.md"}]}
+    monkeypatch.setattr("aegis.hub._http_get", lambda url, headers=None: (200, json.dumps(payload).encode()))
+    outcomes = scan_remote_repo("hf://test-org/empty-model")
+    assert len(outcomes) == 1
+    assert "hf://test-org/empty-model@abcdef123456" in outcomes[0]["path"]

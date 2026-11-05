@@ -83,6 +83,23 @@ aegis scan a.safetensors b.pt --format json            # findings document (docs
 aegis scan model.safetensors --format sarif > aegis.sarif   # SARIF 2.1.0 for GitHub code scanning
 ```
 
+### Scanning before you download
+
+Inspect Hugging Face repositories before downloading checkpoints over the network:
+
+```bash
+aegis scan hf://org/repo
+aegis scan hf://org/repo@revision
+```
+
+Aegis resolves the revision to a pinned commit SHA and inspects files using HTTP range requests:
+- **safetensors**: reads only the header length and header bytes (capped at 100 MB).
+- **GGUF**: incrementally fetches and parses metadata and chat templates (capped at 64 MB).
+- **Pickle files** (`.bin`, `.pt`, `.pth`, `.pkl`, `.ckpt`): refused with a warning; scanning requires a full download.
+- **Repository checks**: flags repositories requiring `trust_remote_code=True` (containing custom Python code or `auto_map`).
+
+**Limits:** only headers and metadata are inspected remotely. Tensor statistics require local weight bytes, and pickle-based checkpoints require a full download to parse opcodes.
+
 The scanner is chosen from each file's leading bytes, never its extension. What each format gets:
 
 - **safetensors**: tensor rules on every float tensor, plus header checks (oversized `__metadata__`,

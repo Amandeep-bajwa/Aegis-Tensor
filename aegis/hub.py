@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from typing import Any
 
 from aegis.findings import (
     RULE_BY_CODE,
@@ -28,7 +29,12 @@ from aegis.formatscan import (
 # safetensors format caps the header length at 100 MB.
 MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
 
+# Hard cap for GGUF header inspection via dynamic range growth.
+MAX_GGUF_HEADER_BYTES = 64 * 1024 * 1024
+INITIAL_GGUF_CHUNK = 1 * 1024 * 1024
+
 PICKLE_EXTENSIONS = (".bin", ".pt", ".pth", ".pkl", ".ckpt")
+MODEL_EXTENSIONS = (".safetensors", ".gguf", *PICKLE_EXTENSIONS)
 
 
 def _http_get(
@@ -251,7 +257,67 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         return result
 
 
-def scan_remote_file(repo: str, sha: str, filename: str) -> FormatScanResult:
+def fetch_gguf_header(repo: str, sha: str, filename: str) -> Any:
+    """Fetch and scan the header of a remote GGUF file using growing HTTP range requests."""
+    from aegis.modelformats import (
+        ModelFormatResult,
+        _check_secrets,
+        _check_template,
+        chat_templates,
+        parse_gguf_header,
+    )
+
+    result = ModelFormatResult(path=filename, format="gguf")
+    encoded_filename = urllib.parse.quote(filename, safe="/")
+    file_url = f"https://huggingface.co/{repo}/resolve/{sha}/{encoded_filename}"
+    data = b""
+    chunk_size = INITIAL_GGUF_CHUNK
+
+    while True:
+        offset = len(data)
+        if offset >= MAX_GGUF_HEADER_BYTES:
+            result.add(
+                "SUSPICIOUS",
+                f"GGUF header exceeds {MAX_GGUF_HEADER_BYTES // (1024 * 1024)} MB limit",
+                filename,
+                code="gguf_malformed",
+            )
+            return result
+
+        fetch_size = min(chunk_size, MAX_GGUF_HEADER_BYTES - offset)
+        end_byte = offset + fetch_size - 1
+        status, chunk = _http_get(file_url, headers={"Range": f"bytes={offset}-{end_byte}"})
+        if status != 206 or not chunk:
+            result.add(
+                "SUSPICIOUS",
+                f"failed to read GGUF header bytes (HTTP {status})",
+                filename,
+                code="gguf_malformed",
+            )
+            return result
+
+        data += chunk
+
+        try:
+            metadata, _infos, _end = parse_gguf_header(data)
+            break
+        except (ValueError, struct.error) as error:
+            err_msg = str(error)
+            if "truncated" not in err_msg and "past the end" not in err_msg:
+                result.add("SUSPICIOUS", f"malformed GGUF ({error})", filename, code="gguf_malformed")
+                return result
+            if len(chunk) < fetch_size:
+                result.add("SUSPICIOUS", f"truncated GGUF file ({error})", filename, code="gguf_malformed")
+                return result
+            chunk_size = min(chunk_size * 2, 16 * 1024 * 1024)
+
+    for key, value in chat_templates(metadata).items():
+        _check_template(value, result, f"{filename}:{key}")
+    _check_secrets(metadata, result, filename)
+    return result
+
+
+def scan_remote_file(repo: str, sha: str, filename: str) -> Any:
     """Scan a remote repository file without downloading full weights."""
     lower_name = filename.lower()
     if lower_name.endswith(PICKLE_EXTENSIONS):
@@ -270,4 +336,67 @@ def scan_remote_file(repo: str, sha: str, filename: str) -> FormatScanResult:
     if lower_name.endswith(".safetensors"):
         return fetch_safetensors_header(repo, sha, filename)
 
+    if lower_name.endswith(".gguf"):
+        return fetch_gguf_header(repo, sha, filename)
+
     return FormatScanResult(path=filename)
+
+
+def parse_hf_target(target: str) -> tuple[str, str]:
+    """Parse 'hf://org/repo[@revision]' into (repo, revision)."""
+    raw = target[len("hf://") :] if target.startswith("hf://") else target
+    if "@" in raw:
+        repo, revision = raw.split("@", 1)
+    else:
+        repo, revision = raw, "main"
+    return repo.strip("/"), revision
+
+
+def scan_remote_repo(target: str) -> list[dict[str, Any]]:
+    """Inspect all remote model files in a Hugging Face repository."""
+    from aegis.findings import _make, from_container, from_safetensors
+    from aegis.modelformats import ModelFormatResult
+    from aegis.verdict import file_verdict
+
+    repo, revision = parse_hf_target(target)
+    hub_info = resolve(repo, revision)
+    candidates = [f for f in hub_info.files if f.lower().endswith(MODEL_EXTENSIONS)]
+    repo_findings = [
+        _make("AEGIS-H005", f.message, {"file": f"hf://{hub_info.repo}@{hub_info.sha}"}) for f in hub_info.findings
+    ]
+    if not candidates:
+        p = f"hf://{hub_info.repo}@{hub_info.sha}"
+        entry = {
+            "path": p,
+            "format": None,
+            "kind": "format",
+            "findings": repo_findings,
+            "tensors": [],
+            "verdict": file_verdict(p, None, repo_findings),
+        }
+        return [entry]
+
+    outcomes = []
+    for filename in candidates:
+        file_path = f"hf://{hub_info.repo}@{hub_info.sha}/{filename}"
+        res = scan_remote_file(hub_info.repo, hub_info.sha, filename)
+        is_gguf = isinstance(res, ModelFormatResult)
+        fmt = "gguf" if is_gguf else ("pickle" if filename.lower().endswith(PICKLE_EXTENSIONS) else "safetensors")
+        kind = "format" if is_gguf else ("container" if fmt == "pickle" else "safetensors")
+        findings = (from_container(file_path, res) if is_gguf else from_safetensors(file_path, [], res)) + [
+            _make("AEGIS-H005", f.message, {"file": file_path}) for f in hub_info.findings
+        ]
+        outcome: dict[str, Any] = {
+            "path": file_path,
+            "format": fmt,
+            "kind": kind,
+            "findings": findings,
+            "tensors": [],
+            "verdict": file_verdict(file_path, fmt, findings),
+        }
+        if kind in ("format", "container"):
+            outcome["container"] = res
+        else:
+            outcome["header"], outcome["tensor_results"] = res, []
+        outcomes.append(outcome)
+    return outcomes

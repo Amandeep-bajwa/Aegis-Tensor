@@ -28,6 +28,8 @@ Every PR adds a line under Unreleased.
 - Remote Hugging Face model inspection via standard-library HTTP range requests (`aegis.hub`): inspect
   safetensors headers and metadata up to a 100 MB ceiling, pin revisions to commit SHAs, refuse pickle
   downloads, and flag repositories requiring `trust_remote_code`.
+- Remote GGUF header inspection and CLI command `aegis scan hf://org/repo[@revision]` with dynamic range
+  buffer growth (64 MB cap), chat template injection analysis, and credential checks before downloading.
 
 ### Changed
 - `benchmarks/disarm_impact.py` imports `torch` and `transformers` inside functions rather than at
