@@ -38,7 +38,7 @@ test documents it · `limit` = detected only in part, with the limit stated · `
 |---|---|---|---|---|---|---|
 | T01 | Structured payload in low mantissa bits (text or code) | EvilModel, StegoNet (LSB) | Low-bit plane entropy < 7.5 | Tensor name | `disarm` | tested |
 | T02 | Random payload in low mantissa bits | MaleficNet-style encrypted payloads | Not statically separable from trained weights | — | `disarm` (removes it) | limit |
-| T03 | Whole tensor overwritten with random bytes | Naive encrypted-blob injection | Sign/exponent lane entropy > 6.5, pooled entropy | Tensor name | `quarantine` | tested |
+| T03 | Whole tensor overwritten with random bytes | Naive encrypted-blob injection | Sign/exponent lane entropy > 6.5 (float32, bfloat16) or > 7.2 (float16), pooled entropy | Tensor name | `quarantine` | tested |
 | T04 | Partial overwrite (about 1% of floats) | Targeted tampering | Out-of-range fraction > 0.1% | Tensor name + fraction | `quarantine` | tested |
 | T08 | Clean model | — | No finding on any channel | — | — | tested (no false positives) |
 | T17 | NaN / Inf injection | Inference-breaking tampering | Out-of-range fraction | Tensor name | `quarantine` | tested |
@@ -127,10 +127,9 @@ Limits:
 
 Every known bypass and limit, with its evidence, is listed in [KNOWN_BYPASSES.md](KNOWN_BYPASSES.md).
 
-1. **Calibration findings** (docs/calibration.md: 54 public models, 18,113 tensors).
-   - At default thresholds, 4 of 54 models (7.4%) raise false positives.
-   - Three of them are float16 bias vectors tripping the exponent-lane rule; proposal P1 is a float16 threshold of 7.2.
-   - The fourth is one DETR weight with structured low bits.
+1. **Calibration findings** (docs/calibration.md: 26,401 tensors across 49 safetensors, 14 MLX and 14 GGUF models).
+   - At default thresholds, 1 of 49 safetensors models (2.0%) raises a false positive: one DETR weight with structured low bits, recorded as accepted (P2).
+   - The float16 bias-vector false positives were fixed with a float16 exponent-lane threshold of 7.2 (P1).
    - Payloads inside **packed quantized tensors** (GPTQ/AWQ int32, bitsandbytes 4-bit uint8, FP8) are only covered by the pooled-entropy rule, with little margin. A format-aware unpacking rule is needed (proposal P3).
    - Models over 3 GB were not calibrated.
 2. **Sub-256-element tensors** (T19) are not covered. A split-payload attacker can use this.
