@@ -79,7 +79,7 @@ Every PR adds a line under Unreleased.
   folded into the final verdict.
 - Single-line verdict with a recommended next step printed after every scan (`aegis scan`).
 - Leaked-credential detection in model metadata (API keys, tokens, private keys).
-- `aegis report-bundle`: collect scan results and supporting evidence into a single archive.
+- `aegis report-bundle`: writes a folder for review (REPORT.md, findings.json, manifest.json with hashes and source); never sends anything and never copies the model file.
 - `aegis doctor`: check the runtime environment and report which optional capabilities are available.
 
 ### Security
