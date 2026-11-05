@@ -51,7 +51,8 @@
         "gguf_models": 14,
         "template_flagged": 1,
         "template_files": 34
-      }
+      },
+      "status": "pending"
     },
     {
       "id": "C11",
@@ -108,19 +109,19 @@
       "text": "Flags a pickle that calls a callable built at runtime (the result of another call), even through the memo, and scans pickles embedded in PyTorch storages."
     },
     {
-      "id": "C22",
+      "id": "C23",
       "text": "Remote safetensors model inspection fetches only the header using exactly two HTTP range requests (the 8-byte length prefix and the header bytes)."
     },
     {
-      "id": "C23",
+      "id": "C24",
       "text": "Remote safetensors files declaring a header length over 100 MB are refused without fetching header bytes."
     },
     {
-      "id": "C24",
+      "id": "C25",
       "text": "Remote servers that ignore the HTTP Range header (returning status 200) are refused without reading full file content."
     },
     {
-      "id": "C25",
+      "id": "C26",
       "text": "Remote pickle files are reported as requiring full download and are never downloaded by remote inspection."
     },
     {

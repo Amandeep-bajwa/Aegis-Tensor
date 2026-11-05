@@ -63,7 +63,7 @@ def test_resolve_raises_clean_message_on_network_error(monkeypatch):
         resolve("test-org/model")
 
 
-@pytest.mark.claim("C22")
+@pytest.mark.claim("C23")
 def test_safetensors_header_is_fetched_with_two_range_requests(monkeypatch, tmp_path):
     """Assert exactly the Range: bytes=0-7 request and then the header-range request, and nothing else."""
     test_file = tmp_path / "model.safetensors"
@@ -93,7 +93,7 @@ def test_safetensors_header_is_fetched_with_two_range_requests(monkeypatch, tmp_
     assert not result.is_suspicious
 
 
-@pytest.mark.claim("C23")
+@pytest.mark.claim("C24")
 def test_oversized_header_length_is_refused_without_fetching(monkeypatch):
     """Length field 2^40. Expect a finding and no second request."""
     calls = []
@@ -133,7 +133,7 @@ def test_zero_header_length_is_refused_without_fetching(monkeypatch):
     assert any(f.channel == "header_unreadable" for f in result.findings)
 
 
-@pytest.mark.claim("C24")
+@pytest.mark.claim("C25")
 def test_safetensors_server_ignoring_range_is_refused(monkeypatch):
     """Server that answers 200 instead of 206 is flagged as not supporting range requests."""
     calls = []
@@ -210,7 +210,7 @@ def test_leaked_token_in_remote_metadata_is_masked(monkeypatch, tmp_path):
     assert "hf_" in msg
 
 
-@pytest.mark.claim("C25")
+@pytest.mark.claim("C26")
 def test_pickle_file_is_reported_not_downloaded(monkeypatch):
     """Pickle files are reported as requiring full download with zero range requests."""
     calls = []
