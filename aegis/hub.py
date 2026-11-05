@@ -180,9 +180,7 @@ def fetch_safetensors_header(repo: str, sha: str, filename: str) -> FormatScanRe
         return result
 
     # Request 2: header bytes
-    status, raw = _http_get(
-        file_url, headers={"Range": f"bytes=8-{7 + header_len}"}, limit=header_len
-    )
+    status, raw = _http_get(file_url, headers={"Range": f"bytes=8-{7 + header_len}"}, limit=header_len)
     if status != 206:
         result = FormatScanResult(path=filename, header_bytes=header_len)
         if status == 0:

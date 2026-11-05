@@ -355,6 +355,7 @@ def test_fetch_safetensors_header_prefix_error(monkeypatch):
 
 def test_fetch_safetensors_header_body_error(monkeypatch):
     """fetch_safetensors_header reports failure if header bytes fetch fails or is truncated."""
+
     # Sub-case A: Non-206 status for header bytes
     def fake_get_500(url, headers=None, limit=None):
         headers = headers or {}
