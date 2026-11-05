@@ -123,6 +123,7 @@ def test_every_scanner_code_maps_to_exactly_one_rule():
         "trust_remote_code",
         "pickle_needs_download",
         "header_unreadable",
+        "hub_uninspected_format",
     }
     assert scanner_codes == set(RULE_BY_CODE)
     assert len(RULE_BY_CODE) == len(RULES)

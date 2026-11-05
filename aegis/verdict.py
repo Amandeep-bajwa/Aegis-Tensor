@@ -55,7 +55,10 @@ def route_for(rule: str) -> str:
 def file_verdict(path: str, file_format: str | None, findings: list[Any], error: str | None = None) -> dict[str, Any]:
     """Verdict for one scanned file. ``findings`` are aegis.findings.Finding objects."""
     severities = {f.severity for f in findings}
-    disarm = f"aegis disarm {path} {default_disarm_path(path)}" if file_format in DISARMABLE else None
+    is_remote = str(path).startswith("hf://")
+    disarm = (
+        f"aegis disarm {path} {default_disarm_path(path)}" if (file_format in DISARMABLE and not is_remote) else None
+    )
     if error:
         return {
             "level": SUSPICIOUS,
@@ -69,6 +72,7 @@ def file_verdict(path: str, file_format: str | None, findings: list[Any], error:
     disclosure = PLATFORM if PLATFORM in routes else OWNER if OWNER in routes else NONE
     if "critical" in severities:
         rules = sorted({f.rule for f in findings if f.severity == "critical"})
+        cmd = f"aegis report-bundle {path}" if not is_remote else None
         return {
             "level": CRITICAL,
             "label": LABELS[CRITICAL],
@@ -76,12 +80,14 @@ def file_verdict(path: str, file_format: str | None, findings: list[Any], error:
             "next_step": "Do not load this file. Quarantine it (move it out of every model directory) and report "
             "it to the platform, not the uploader (SECURITY.md). `aegis report-bundle` prepares "
             "the report.",
-            "command": f"aegis report-bundle {path}",
+            "command": cmd,
             "disclosure": PLATFORM,
         }
     if severities & {"high", "medium"}:
         rules = sorted({f.rule for f in findings if f.severity in ("high", "medium")})
-        if disarm:
+        if "AEGIS-H008" in rules:
+            step = "Format cannot be inspected remotely. Download the file to scan with aegis scan."
+        elif disarm:
             step = (
                 "Run `aegis disarm`, then scan the output again. If findings remain (overwritten tensors, "
                 "tampered structure), get the file from another source."
@@ -96,7 +102,12 @@ def file_verdict(path: str, file_format: str | None, findings: list[Any], error:
             "command": disarm,
             "disclosure": disclosure,
         }
-    if disarm:
+    if is_remote and file_format in DISARMABLE:
+        step = (
+            "Header-only inspection found no known findings. Download the file to inspect weights and tensor "
+            "statistics."
+        )
+    elif disarm:
         step = (
             "Disarm recommended: no known payload was found, but the rules are public and a payload can be "
             "tuned to stay under them. Disarming removes anything in the low-order bits."

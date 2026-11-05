@@ -145,10 +145,19 @@ def _treatment_lines(results, header_result, model_path: Any) -> list[str]:
     header_sanitize = [f for f in header_result.findings if f.treatment == "sanitize"]
     header_quarantine = [f for f in header_result.findings if f.treatment == "quarantine"]
     if str(model_path).startswith("hf://"):
-        fname = str(model_path).split("/")[-1]
-        disarm_cmd = f"aegis disarm {fname} disarmed_{fname}"
-    else:
-        disarm_cmd = f"aegis disarm {model_path} {default_disarm_path(Path(model_path))}"
+        if structured or header_sanitize:
+            lines.append("• Header payload detected in remote model: do not download or load this checkpoint.")
+        if overwritten or header_quarantine:
+            names = ", ".join(overwritten + [f.where for f in header_quarantine])[:200]
+            lines.append(
+                f"• Overwritten or unreadable tensors ({names}): quarantine. "
+                "Obtain these tensors from the original source."
+            )
+        if lines:
+            lines.append("Do not load this checkpoint until verified.")
+        return lines
+
+    disarm_cmd = f"aegis disarm {model_path} {default_disarm_path(Path(model_path))}"
 
     if structured or header_sanitize:
         flags = " --strip-metadata" if header_sanitize else ""
@@ -381,51 +390,52 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
         f"Low-bit plane < {thresholds['plane']:.2f} | {benford_note}[/dim]\n"
     )
 
-    if not results and str(model_path).startswith("hf://"):
-        console.print("[dim]Header-only remote inspection (weights not downloaded).[/dim]")
-    else:
+    suspicious_count = 0
+    structural_count = 0
+
+    if results:
         table = Table(
             title=f"Aegis-Tensor Static Analysis Report ({len(results)} Tensors)",
             box=box.ROUNDED,
             header_style="bold magenta",
         )
-    table.add_column("Tensor Name", style="cyan", overflow="ellipsis")
-    table.add_column("Dtype", justify="center")
-    table.add_column("Shape", justify="center")
-    table.add_column("Entropy (Bits)", justify="right")
-    table.add_column("Exponent Lane", justify="right")
-    table.add_column("Low-Bit Plane", justify="right")
-    table.add_column("Status", justify="center")
+        table.add_column("Tensor Name", style="cyan", overflow="ellipsis")
+        table.add_column("Dtype", justify="center")
+        table.add_column("Shape", justify="center")
+        table.add_column("Entropy (Bits)", justify="right")
+        table.add_column("Exponent Lane", justify="right")
+        table.add_column("Low-Bit Plane", justify="right")
+        table.add_column("Status", justify="center")
 
-    suspicious_count = 0
-    structural_count = 0
-    for res in results:
-        if res.is_suspicious:
-            suspicious_count += 1
-            status_text = "[bold red]SUSPICIOUS[/bold red]"
-        else:
-            status_text = "[bold green]CLEAN[/bold green]"
-        if _is_structural(res):
-            structural_count += 1
+        for res in results:
+            if res.is_suspicious:
+                suspicious_count += 1
+                status_text = "[bold red]SUSPICIOUS[/bold red]"
+            else:
+                status_text = "[bold green]CLEAN[/bold green]"
+            if _is_structural(res):
+                structural_count += 1
 
-        entropy_color = "red" if res.entropy > thresholds["entropy"] else "white"
-        lane = res.exponent_lane_entropy
-        lane_limit = thresholds["exponent_f16"] if res.dtype == "F16" else thresholds["exponent"]
-        lane_text = "-" if lane is None else (f"[red]{lane:.4f}[/red]" if lane > lane_limit else f"{lane:.4f}")
-        plane = res.low_plane_entropy
-        plane_text = (
-            "-" if plane is None else (f"[red]{plane:.4f}[/red]" if plane < thresholds["plane"] else f"{plane:.4f}")
-        )
-        table.add_row(
-            res.name,
-            res.dtype,
-            str(res.shape),
-            f"[{entropy_color}]{res.entropy:.4f}[/{entropy_color}]",
-            lane_text,
-            plane_text,
-            status_text,
-        )
-    console.print(table)
+            entropy_color = "red" if res.entropy > thresholds["entropy"] else "white"
+            lane = res.exponent_lane_entropy
+            lane_limit = thresholds["exponent_f16"] if res.dtype == "F16" else thresholds["exponent"]
+            lane_text = "-" if lane is None else (f"[red]{lane:.4f}[/red]" if lane > lane_limit else f"{lane:.4f}")
+            plane = res.low_plane_entropy
+            plane_text = (
+                "-" if plane is None else (f"[red]{plane:.4f}[/red]" if plane < thresholds["plane"] else f"{plane:.4f}")
+            )
+            table.add_row(
+                res.name,
+                res.dtype,
+                str(res.shape),
+                f"[{entropy_color}]{res.entropy:.4f}[/{entropy_color}]",
+                lane_text,
+                plane_text,
+                status_text,
+            )
+        console.print(table)
+    elif str(model_path).startswith("hf://"):
+        console.print("[dim]Header-only remote inspection (weights not downloaded).[/dim]")
 
     if header_result.findings:
         header_table = Table(title="Header Channel Findings", box=box.ROUNDED, header_style="bold magenta")
@@ -455,6 +465,17 @@ def _render_safetensors_text(outcome: dict, thresholds: dict) -> None:
                 "A structural hit is a strong signal; other hits warrant review.",
                 title="🚨 Static Steganography Scan Alert",
                 border_style="red" if is_critical else "yellow",
+            )
+        )
+    elif str(model_path).startswith("hf://"):
+        badge = get_risk_badge("CLEAN")
+        console.print(
+            Panel(
+                f"{badge}\n\n"
+                "[bold green]Header inspection clean.[/bold green]\n"
+                "No malicious metadata, credentials, or header channels detected in remote header.",
+                title="✅ Header Clean",
+                border_style="green",
             )
         )
     else:
@@ -578,7 +599,7 @@ def scan_command(
 
     files: list[dict[str, Any]] = []
     errored = False
-    from aegis.hub import scan_remote_repo
+    from aegis.hub import HubError, scan_remote_repo
 
     for target in model_paths:
         target_str = str(target)
@@ -590,9 +611,9 @@ def scan_command(
                     files.append(outcome)
                     if text:
                         _render_outcome(outcome, thresholds)
-            except Exception as e:
+            except (HubError, ScanError, ValueError) as e:
                 errored = True
-                fail_entry = {
+                fail_entry: dict[str, Any] = {
                     "path": target_str,
                     "format": None,
                     "findings": [],

@@ -54,6 +54,10 @@ capability that cannot be tested is not listed.
 | C24 | Remote safetensors files declaring a header length over 100 MB are refused without fetching header bytes. | [`test_oversized_header_length_is_refused_without_fetching`](tests/test_hub.py) |
 | C25 | Remote servers that ignore the HTTP Range header (returning status 200) are refused without reading full file content. | [`test_safetensors_server_ignoring_range_is_refused`](tests/test_hub.py) |
 | C26 | Remote pickle files are reported as requiring full download and are never downloaded by remote inspection. | [`test_pickle_file_is_reported_not_downloaded`](tests/test_hub.py) |
+| C27 | Remote GGUF chat templates and metadata are checked from the header only using growing HTTP range requests up to 64 MB without downloading tensor payloads. | [`test_gguf_template_injection_found_from_header_only`](tests/test_hub.py)<br>[`test_gguf_header_growth_stops_at_cap`](tests/test_hub.py) |
+| C28 | Remote repository scanning outputs findings validating against findings-v1.schema.json in JSON and SARIF 2.1.0 formats. | [`test_cli_hf_scan_json_validates_against_schema`](tests/test_hub.py)<br>[`test_cli_hf_scan_text_modes`](tests/test_hub.py)<br>[`test_cli_hf_scan_sarif_output`](tests/test_hub.py) |
+| C29 | Remote model files whose formats cannot be inspected via range requests (such as ONNX, Keras, HDF5, numpy arrays, and archives) are reported as uninspected without downloading. | [`test_cli_hf_scan_uninspected_format`](tests/test_hub.py) |
+| C30 | Remote repository inspection detects trust_remote_code=True requirements once per repository without downloading weights. | [`test_cli_hf_scan_trust_remote_code_once_per_repo`](tests/test_hub.py) |
 | L01 | **Known limit:** Random bits hidden in the low mantissa bits cannot be detected by any static statistic. Only `aegis disarm` removes them. | [`test_t02_random_lsb_payload_is_a_documented_blind_spot_and_disarm_removes_it`](tests/test_threat_matrix.py) |
 | L02 | **Known limit:** Payloads split across tensors of fewer than 256 elements are not detected. | [`test_t19_payload_split_into_tiny_tensors_is_flagged`](tests/test_threat_matrix.py) |
 
@@ -98,7 +102,7 @@ Aegis resolves the revision to a pinned commit SHA and inspects files using HTTP
 - **Pickle files** (`.bin`, `.pt`, `.pth`, `.pkl`, `.ckpt`): refused with a warning; scanning requires a full download.
 - **Repository checks**: flags repositories requiring `trust_remote_code=True` (containing custom Python code or `auto_map`).
 
-**Limits:** only headers and metadata are inspected remotely. Tensor statistics require local weight bytes, and pickle-based checkpoints require a full download to parse opcodes.
+**Limits:** only headers and metadata are inspected remotely. Tensor statistics require local weight bytes, and pickle-based checkpoints require a full download to parse opcodes. Model formats without remote range inspection support (such as ONNX, Keras, HDF5, numpy arrays, and archives) are not inspected remotely and are reported with a warning to download before scanning.
 
 The scanner is chosen from each file's leading bytes, never its extension. What each format gets:
 

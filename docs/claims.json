@@ -125,6 +125,22 @@
       "text": "Remote pickle files are reported as requiring full download and are never downloaded by remote inspection."
     },
     {
+      "id": "C27",
+      "text": "Remote GGUF chat templates and metadata are checked from the header only using growing HTTP range requests up to 64 MB without downloading tensor payloads."
+    },
+    {
+      "id": "C28",
+      "text": "Remote repository scanning outputs findings validating against findings-v1.schema.json in JSON and SARIF 2.1.0 formats."
+    },
+    {
+      "id": "C29",
+      "text": "Remote model files whose formats cannot be inspected via range requests (such as ONNX, Keras, HDF5, numpy arrays, and archives) are reported as uninspected without downloading."
+    },
+    {
+      "id": "C30",
+      "text": "Remote repository inspection detects trust_remote_code=True requirements once per repository without downloading weights."
+    },
+    {
       "id": "L01",
       "kind": "limit",
       "text": "Random bits hidden in the low mantissa bits cannot be detected by any static statistic. Only `aegis disarm` removes them."

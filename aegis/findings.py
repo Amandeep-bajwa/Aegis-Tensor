@@ -158,6 +158,16 @@ RULES: dict[str, dict[str, Any]] = {
         "atlas": ["AML.T0010.003"],
         "owasp": ["ML06", "LLM03"],
     },
+    "AEGIS-H008": {
+        "code": "hub_uninspected_format",
+        "name": "hub-uninspected-format",
+        "severity": "medium",
+        "confidence": 1.0,
+        "title": "Model format not inspected remotely without downloading",
+        "treatment": "inspect",
+        "atlas": ["AML.T0010.003"],
+        "owasp": ["ML06", "LLM03"],
+    },
     "AEGIS-P001": {
         "code": "dangerous_import",
         "name": "pickle-code-execution",
@@ -445,7 +455,9 @@ def _make(
     )
 
 
-def _disarm_command(path: str, strip: bool = False) -> str:
+def _disarm_command(path: str, strip: bool = False) -> str | None:
+    if str(path).startswith("hf://"):
+        return None
     from aegis.disarm import default_disarm_path
 
     return f"aegis disarm {path} {default_disarm_path(path)}" + (" --strip-metadata" if strip else "")

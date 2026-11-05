@@ -33,8 +33,29 @@ MAX_SAFETENSORS_HEADER_BYTES = 100 * 1024 * 1024
 MAX_GGUF_HEADER_BYTES = 64 * 1024 * 1024
 INITIAL_GGUF_CHUNK = 1 * 1024 * 1024
 
+INSPECTED_EXTENSIONS = (".safetensors", ".gguf")
 PICKLE_EXTENSIONS = (".bin", ".pt", ".pth", ".pkl", ".ckpt")
-MODEL_EXTENSIONS = (".safetensors", ".gguf", *PICKLE_EXTENSIONS)
+UNINSPECTED_EXTENSIONS = (
+    ".onnx",
+    ".keras",
+    ".h5",
+    ".hdf5",
+    ".npy",
+    ".npz",
+    ".7z",
+    ".zip",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".joblib",
+    ".msgpack",
+)
+ALL_MODEL_EXTENSIONS = (*INSPECTED_EXTENSIONS, *PICKLE_EXTENSIONS, *UNINSPECTED_EXTENSIONS)
+MODEL_EXTENSIONS = ALL_MODEL_EXTENSIONS
+
+
+class HubError(ValueError):
+    """A Hugging Face repository or file could not be resolved or fetched."""
 
 
 def _http_get(
@@ -85,10 +106,15 @@ def resolve(repo: str, revision: str = "main") -> HubRepoInfo:
     if status != 200:
         if status == 0:
             err = body.decode("utf-8", errors="replace")
-            raise ValueError(f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face")
-        raise ValueError(f"Hugging Face API returned status {status} for {repo}@{revision}")
+            raise HubError(f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face")
+        if status == 404:
+            raise HubError(f"Hugging Face API returned status 404 (not found) for {repo}@{revision}")
+        raise HubError(f"Hugging Face API returned status {status} for {repo}@{revision}")
 
-    data = json.loads(body.decode("utf-8"))
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception as e:
+        raise HubError(f"invalid JSON response from Hugging Face API: {e}") from e
     sha = data.get("sha", "")
     siblings = data.get("siblings", [])
     files = [s["rfilename"] for s in siblings if isinstance(s, dict) and "rfilename" in s]
@@ -288,11 +314,18 @@ def fetch_gguf_header(repo: str, sha: str, filename: str) -> Any:
         end_byte = offset + fetch_size - 1
         status, chunk = _http_get(file_url, headers={"Range": f"bytes={offset}-{end_byte}"})
         if status != 206 or not chunk:
+            if status == 0:
+                err = chunk.decode("utf-8", errors="replace") if chunk else ""
+                msg = f"could not reach Hugging Face: {err}" if err else "could not reach Hugging Face"
+            elif status == 200:
+                msg = "HTTP range requests not supported by server (status 200)"
+            else:
+                msg = f"failed to read GGUF header bytes (HTTP {status})"
             result.add(
                 "SUSPICIOUS",
-                f"failed to read GGUF header bytes (HTTP {status})",
+                msg,
                 filename,
-                code="gguf_malformed",
+                code="header_unreadable",
             )
             return result
 
@@ -327,7 +360,7 @@ def scan_remote_file(repo: str, sha: str, filename: str) -> Any:
                 "SUSPICIOUS",
                 "pickle_needs_download",
                 filename,
-                "pickle format: full download required to scan; prefer the safetensors version",
+                f"{filename}: pickle format: full download required to scan; refused without downloading",
                 "refuse",
             )
         )
@@ -338,6 +371,19 @@ def scan_remote_file(repo: str, sha: str, filename: str) -> Any:
 
     if lower_name.endswith(".gguf"):
         return fetch_gguf_header(repo, sha, filename)
+
+    if lower_name.endswith(UNINSPECTED_EXTENSIONS):
+        result = FormatScanResult(path=filename)
+        result.findings.append(
+            FormatFinding(
+                "SUSPICIOUS",
+                "hub_uninspected_format",
+                filename,
+                f"{filename}: format cannot be inspected remotely; download the file to scan",
+                "inspect",
+            )
+        )
+        return result
 
     return FormatScanResult(path=filename)
 
@@ -355,12 +401,11 @@ def parse_hf_target(target: str) -> tuple[str, str]:
 def scan_remote_repo(target: str) -> list[dict[str, Any]]:
     """Inspect all remote model files in a Hugging Face repository."""
     from aegis.findings import _make, from_container, from_safetensors
-    from aegis.modelformats import ModelFormatResult
     from aegis.verdict import file_verdict
 
     repo, revision = parse_hf_target(target)
     hub_info = resolve(repo, revision)
-    candidates = [f for f in hub_info.files if f.lower().endswith(MODEL_EXTENSIONS)]
+    candidates = [f for f in hub_info.files if f.lower().endswith(ALL_MODEL_EXTENSIONS)]
     repo_findings = [
         _make("AEGIS-H005", f.message, {"file": f"hf://{hub_info.repo}@{hub_info.sha}"}) for f in hub_info.findings
     ]
@@ -376,27 +421,86 @@ def scan_remote_repo(target: str) -> list[dict[str, Any]]:
         }
         return [entry]
 
-    outcomes = []
+    outcomes: list[dict[str, Any]] = []
+    if repo_findings:
+        repo_path = f"hf://{hub_info.repo}@{hub_info.sha}"
+        outcomes.append(
+            {
+                "path": repo_path,
+                "format": None,
+                "kind": "format",
+                "findings": repo_findings,
+                "tensors": [],
+                "verdict": file_verdict(repo_path, None, repo_findings),
+            }
+        )
+
     for filename in candidates:
         file_path = f"hf://{hub_info.repo}@{hub_info.sha}/{filename}"
-        res = scan_remote_file(hub_info.repo, hub_info.sha, filename)
-        is_gguf = isinstance(res, ModelFormatResult)
-        fmt = "gguf" if is_gguf else ("pickle" if filename.lower().endswith(PICKLE_EXTENSIONS) else "safetensors")
-        kind = "format" if is_gguf else ("container" if fmt == "pickle" else "safetensors")
-        findings = (from_container(file_path, res) if is_gguf else from_safetensors(file_path, [], res)) + [
-            _make("AEGIS-H005", f.message, {"file": file_path}) for f in hub_info.findings
-        ]
-        outcome: dict[str, Any] = {
-            "path": file_path,
-            "format": fmt,
-            "kind": kind,
-            "findings": findings,
-            "tensors": [],
-            "verdict": file_verdict(file_path, fmt, findings),
-        }
-        if kind in ("format", "container"):
-            outcome["container"] = res
+        lower_name = filename.lower()
+        if lower_name.endswith(".safetensors"):
+            res = fetch_safetensors_header(hub_info.repo, hub_info.sha, filename)
+            findings = from_safetensors(file_path, [], res)
+            outcomes.append(
+                {
+                    "path": file_path,
+                    "format": "safetensors",
+                    "kind": "safetensors",
+                    "findings": findings,
+                    "tensors": [],
+                    "header": res,
+                    "tensor_results": [],
+                    "verdict": file_verdict(file_path, "safetensors", findings),
+                }
+            )
+        elif lower_name.endswith(".gguf"):
+            res = fetch_gguf_header(hub_info.repo, hub_info.sha, filename)
+            findings = from_container(file_path, res)
+            outcomes.append(
+                {
+                    "path": file_path,
+                    "format": "gguf",
+                    "kind": "format",
+                    "findings": findings,
+                    "tensors": [],
+                    "container": res,
+                    "verdict": file_verdict(file_path, "gguf", findings),
+                }
+            )
+        elif lower_name.endswith(PICKLE_EXTENSIONS):
+            finding = _make(
+                "AEGIS-H006",
+                f"{filename}: pickle format requires full download to scan; refused without downloading",
+                {"file": file_path, "header_key": "header"},
+            )
+            findings = [finding]
+            outcomes.append(
+                {
+                    "path": file_path,
+                    "format": "pickle",
+                    "kind": "format",
+                    "findings": findings,
+                    "tensors": [],
+                    "verdict": file_verdict(file_path, "pickle", findings),
+                }
+            )
         else:
-            outcome["header"], outcome["tensor_results"] = res, []
-        outcomes.append(outcome)
+            ext = next(e for e in UNINSPECTED_EXTENSIONS if lower_name.endswith(e))
+            fmt_name = ext.lstrip(".")
+            finding = _make(
+                "AEGIS-H008",
+                f"{filename}: format cannot be inspected remotely; download the file to scan",
+                {"file": file_path},
+            )
+            findings = [finding]
+            outcomes.append(
+                {
+                    "path": file_path,
+                    "format": fmt_name,
+                    "kind": "format",
+                    "findings": findings,
+                    "tensors": [],
+                    "verdict": file_verdict(file_path, fmt_name, findings),
+                }
+            )
     return outcomes

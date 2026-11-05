@@ -30,6 +30,9 @@ Every PR adds a line under Unreleased.
   downloads, and flag repositories requiring `trust_remote_code`.
 - Remote GGUF header inspection and CLI command `aegis scan hf://org/repo[@revision]` with dynamic range
   buffer growth (64 MB cap), chat template injection analysis, and credential checks before downloading.
+- Remote repository scanning reports formats without range inspection support (ONNX, Keras/HDF5, numpy arrays,
+  archives) as uninspected (AEGIS-H008), validates JSON and SARIF 2.1.0 output schemas, and reports
+  repository-level requirements (such as `trust_remote_code`) once per repository.
 
 ### Changed
 - `benchmarks/disarm_impact.py` imports `torch` and `transformers` inside functions rather than at
