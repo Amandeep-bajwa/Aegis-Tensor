@@ -58,6 +58,8 @@ jobs:
         run: ruff format --check .
       - name: mypy
         run: mypy aegis
+      - name: Check README claims table and benchmark register
+        run: python scripts/claims.py
 
   test:
     name: test (py${{ matrix.python-version }})
