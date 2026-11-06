@@ -1,7 +1,6 @@
 """Tests for remote model scanning via HTTP range requests (aegis.hub).
 
-Every test replaces `aegis.hub._http_get` with a fake (monkeypatch). No test touches the network
-unless explicitly invoked with `-m network`.
+Every test replaces `aegis.hub._http_get` with a fake (monkeypatch). No test touches the network.
 """
 
 import http.server
@@ -635,7 +634,7 @@ def test_cli_hf_scan_json_validates_against_schema(monkeypatch):
 
 @pytest.mark.claim("C28")
 def test_cli_hf_scan_text_modes(monkeypatch):
-    """Text output renders cleanly for remote safetensors, GGUF, pickle, and uninspected formats."""
+    """Text output renders cleanly for remote safetensors, GGUF, pickle, uninspected formats, and repo findings."""
     runner = CliRunner()
     st_bytes = struct.pack("<Q", 2) + b"{}"
     gguf_raw = gguf_bytes([("general.name", "clean")], [])
@@ -646,6 +645,7 @@ def test_cli_hf_scan_text_modes(monkeypatch):
             {"rfilename": "model.gguf"},
             {"rfilename": "pytorch_model.bin"},
             {"rfilename": "model.onnx"},
+            {"rfilename": "modeling_custom.py"},
         ],
     }
 
@@ -667,6 +667,8 @@ def test_cli_hf_scan_text_modes(monkeypatch):
     assert "model.gguf" in res.stdout
     assert "pytorch_model.bin" in res.stdout
     assert "model.onnx" in res.stdout
+    assert "REPOSITORY Scan" in res.stdout
+    assert "AEGIS-H005" in res.stdout
     # Verify no disarm command is recommended for remote files
     assert "aegis disarm" not in res.stdout
 
@@ -772,12 +774,16 @@ def test_cli_hf_scan_error_exits_2(monkeypatch):
     assert "could not reach Hugging Face" in res_net.stdout
 
 
-def test_scan_remote_repo_empty(monkeypatch):
-    """Remote repository with no model files returns repository-level outcome."""
-    payload = {"sha": "abcdef123456", "siblings": [{"rfilename": "README.md"}]}
+def test_scan_remote_repo_no_model_files_raises(monkeypatch):
+    """Remote repository with no model files raises HubError and exits 2."""
+    runner = CliRunner()
+    payload = {"sha": "abcdef123456", "siblings": [{"rfilename": "README.md"}, {"rfilename": "config.json"}]}
     monkeypatch.setattr(
         "aegis.hub._http_get", lambda url, headers=None, limit=None: (200, json.dumps(payload).encode())
     )
-    outcomes = scan_remote_repo("hf://test-org/empty-model")
-    assert len(outcomes) == 1
-    assert "hf://test-org/empty-model@abcdef123456" in outcomes[0]["path"]
+    with pytest.raises(hub.HubError, match="no model files found in this repository"):
+        scan_remote_repo("hf://test-org/empty-model")
+
+    res = runner.invoke(app, ["scan", "hf://test-org/empty-model"])
+    assert res.exit_code == 2
+    assert "no model files found in this repository" in res.stdout

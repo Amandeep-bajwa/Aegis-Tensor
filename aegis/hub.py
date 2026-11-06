@@ -410,16 +410,7 @@ def scan_remote_repo(target: str) -> list[dict[str, Any]]:
         _make("AEGIS-H005", f.message, {"file": f"hf://{hub_info.repo}@{hub_info.sha}"}) for f in hub_info.findings
     ]
     if not candidates:
-        p = f"hf://{hub_info.repo}@{hub_info.sha}"
-        entry = {
-            "path": p,
-            "format": None,
-            "kind": "format",
-            "findings": repo_findings,
-            "tensors": [],
-            "verdict": file_verdict(p, None, repo_findings),
-        }
-        return [entry]
+        raise HubError("no model files found in this repository")
 
     outcomes: list[dict[str, Any]] = []
     if repo_findings:

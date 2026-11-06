@@ -357,16 +357,21 @@ def _render_container_text(outcome: dict) -> None:
 
 
 def _render_findings_text(outcome: dict) -> None:
-    """Generic text view: one row per finding (used for GGUF, Keras, HDF5 and ONNX)."""
+    """Generic text view: one row per finding (used for GGUF, Keras, HDF5, ONNX, and repository checks)."""
     findings = outcome["findings"]
-    console.print(
-        f"[bold]Scanning:[/bold] [cyan]{_display_path(outcome['path'])}[/cyan] "
-        f"[dim](format: {outcome['format']}, {len(outcome.get('tensors', []))} float tensors analysed)[/dim]"
-    )
+    fmt = outcome.get("format")
+    if fmt:
+        dim_info = f"[dim](format: {fmt}, {len(outcome.get('tensors', []))} float tensors analysed)[/dim]"
+        title = f"Aegis-Tensor {fmt.upper()} Scan"
+    else:
+        dim_info = "[dim](repository checks)[/dim]"
+        title = "Aegis-Tensor REPOSITORY Scan"
+
+    console.print(f"[bold]Scanning:[/bold] [cyan]{_display_path(outcome['path'])}[/cyan] {dim_info}")
     if not findings:
         console.print(Panel(f"{get_risk_badge('CLEAN')}\n\nNo findings.", title="✅ Model Clean", border_style="green"))
         return
-    table = Table(title=f"Aegis-Tensor {outcome['format'].upper()} Scan", box=box.ROUNDED, header_style="bold magenta")
+    table = Table(title=title, box=box.ROUNDED, header_style="bold magenta")
     table.add_column("Severity", justify="center")
     table.add_column("Rule")
     table.add_column("Location", style="cyan", overflow="fold")
