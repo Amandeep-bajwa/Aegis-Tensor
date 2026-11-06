@@ -128,6 +128,36 @@ RULES: dict[str, dict[str, Any]] = {
         "atlas": ["AML.T0010.003"],
         "owasp": ["ML06", "LLM03"],
     },
+    "AEGIS-H005": {
+        "code": "trust_remote_code",
+        "name": "hub-trust-remote-code",
+        "severity": "medium",
+        "confidence": 0.8,
+        "title": "Model repository requires trust_remote_code=True",
+        "treatment": "inspect",
+        "atlas": ["AML.T0010.003"],
+        "owasp": ["ML06", "LLM03"],
+    },
+    "AEGIS-H006": {
+        "code": "pickle_needs_download",
+        "name": "hub-pickle-needs-download",
+        "severity": "medium",
+        "confidence": 0.5,
+        "title": "Pickle checkpoint requires full download to scan",
+        "treatment": "refuse",
+        "atlas": ["AML.T0010.003"],
+        "owasp": ["ML06", "LLM03"],
+    },
+    "AEGIS-H007": {
+        "code": "header_unreadable",
+        "name": "hub-header-unreadable",
+        "severity": "medium",
+        "confidence": 0.5,
+        "title": "Remote model header could not be read",
+        "treatment": "quarantine",
+        "atlas": ["AML.T0010.003"],
+        "owasp": ["ML06", "LLM03"],
+    },
     "AEGIS-P001": {
         "code": "dangerous_import",
         "name": "pickle-code-execution",
@@ -385,6 +415,10 @@ class Finding:
                 f"{self.location.get('entry')}|{self.location.get('offset')}|{self.location.get('header_key')}"
             )
             self.id = hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @property
+    def code(self) -> str:
+        return RULES[self.rule]["code"]
 
 
 def _make(
