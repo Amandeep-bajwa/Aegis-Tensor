@@ -27,6 +27,9 @@ Every PR adds a line under Unreleased.
   README claims, claims without tests, unregistered markers, duplicate IDs and execution without
   optional dependencies (#37).
 - Full claims and benchmark register validation in the CI `lint` job (#37).
+- Remote Hugging Face model inspection via standard-library HTTP range requests (`aegis.hub`): inspect
+  safetensors headers and metadata up to a 100 MB ceiling, pin revisions to commit SHAs, refuse pickle
+  downloads, and flag repositories requiring `trust_remote_code`.
 
 ### Changed
 - `benchmarks/disarm_impact.py` imports `torch` and `transformers` inside functions rather than at

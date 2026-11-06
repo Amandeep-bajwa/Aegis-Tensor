@@ -28,14 +28,14 @@ REPO_URL = "https://github.com/KrishG7/Aegis-Tensor/blob/main"
 
 
 def load_register() -> list[dict]:
-    return json.loads(REGISTER.read_text(encoding="utf-8"))["claims"]
+    return json.loads(REGISTER.read_text())["claims"]
 
 
 def collect_markers() -> dict[str, list[tuple[str, str, int]]]:
     """claim id -> [(test file, test name, line)] from @pytest.mark.claim decorators."""
     found: dict[str, list[tuple[str, str, int]]] = {}
     for path in sorted(TESTS.glob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
                 continue
@@ -186,16 +186,16 @@ def check(write: bool = False, benchmarks: bool = True) -> list[str]:
                     "run `python scripts/claims.py --write`"
                 )
     if write:
-        REGISTER.write_text(json.dumps(register, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        REGISTER.write_text(json.dumps(register, indent=2, ensure_ascii=False) + "\n")
     section = render_section(claims, markers)
-    readme = README.read_text(encoding="utf-8")
+    readme = README.read_text()
     if START not in readme or END not in readme:
         problems.append("README.md has no claims section markers")
     else:
         current = readme[readme.index(START) : readme.index(END) + len(END)]
         if current != section:
             if write:
-                README.write_text(readme.replace(current, section), encoding="utf-8")
+                README.write_text(readme.replace(current, section))
             else:
                 problems.append("README claims section is out of date: run `python scripts/claims.py --write`")
     return problems

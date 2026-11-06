@@ -21,6 +21,7 @@ _CLAIMS = {c["id"]: c for c in json.loads(REGISTER.read_text())["claims"]}
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "claim(*ids): this test is evidence for the listed claims in docs/claims.json")
+    config.addinivalue_line("markers", "network: tests that touch the network (deselected by default)")
 
 
 def _must_run(item) -> bool:
